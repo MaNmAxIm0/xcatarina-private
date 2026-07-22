@@ -31,4 +31,7 @@ jobs:
           fi
           mirror_url="${GITLAB_REPOSITORY_URL#https://}"
           git remote add gitlab "https://oauth2:${GITLAB_TOKEN}@${mirror_url}"
-          git push --mirror gitlab
+          # Sync only the public branch and tags; do not publish GitHub's
+          # internal origin/* tracking refs into GitLab.
+          git push --force gitlab HEAD:main
+          git push --force --tags gitlab
