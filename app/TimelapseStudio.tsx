@@ -116,6 +116,8 @@ export function TimelapseStudio() {
       let embed = "";
       if (url.hostname.includes("twitch.tv") && parts[0] === "videos" && parts[1]) {
         embed = `https://player.twitch.tv/?video=${encodeURIComponent(parts[1])}&parent=${encodeURIComponent(parent)}&autoplay=false`;
+      } else if (url.hostname.includes("twitch.tv") && parts.length >= 3 && parts[1] === "v" && parts[2]) {
+        embed = `https://player.twitch.tv/?video=${encodeURIComponent(parts[2])}&parent=${encodeURIComponent(parent)}&autoplay=false`;
       } else if (url.hostname === "clips.twitch.tv" && parts[0]) {
         embed = `https://clips.twitch.tv/embed?clip=${encodeURIComponent(parts[0])}&parent=${encodeURIComponent(parent)}&autoplay=false`;
       } else if (url.hostname.includes("twitch.tv") && parts[0]) {
@@ -288,7 +290,7 @@ export function TimelapseStudio() {
         <div className="controls">
           <div className="step-heading"><span>01</span><div><h2>Fonte da live</h2><p>Usa o link da Twitch ou a gravação original.</p></div></div>
           <div className="twitch-row">
-            <input aria-label="Link da Twitch" value={twitchUrl} onChange={(event) => setTwitchUrl(event.target.value)} placeholder="https://twitch.tv/videos/…" />
+          <input aria-label="Link da Twitch" value={twitchUrl} onChange={(event) => setTwitchUrl(event.target.value)} placeholder="https://twitch.tv/xcatarina/v/…" />
             <button type="button" className="dark-button" onClick={tryTwitch}>Tentar importar</button>
           </div>
           <div className="or"><span />ou<span /></div>
