@@ -308,7 +308,7 @@ export function TimelapseStudio() {
             {sourceUrl ? <canvas ref={canvasRef} aria-label="Pré-visualização do timelapse" /> : <div className="empty-preview"><span>✦</span><b>O teu timelapse aparece aqui</b><small>Escolhe uma gravação para começar</small></div>}
           </div>
           {twitchEmbed && <div className="twitch-preview"><iframe title="Pré-visualização Twitch" src={twitchEmbed} allowFullScreen /></div>}
-          <video ref={videoRef} src={sourceUrl} muted playsInline preload="metadata" onLoadedData={refreshPreview} />
+          <video ref={videoRef} src={sourceUrl || undefined} muted playsInline preload="metadata" onLoadedData={refreshPreview} />
           <div className="status" aria-live="polite"><span>{status}</span>{busy && <b>Falta {100 - progress}%</b>}</div>
           {busy && <div className="progress"><i style={{ width: `${progress}%` }} /></div>}
           <button className="generate" type="button" disabled={busy} onClick={generate}>{busy ? "A gerar…" : "Gerar os 2 timelapses"}<span>→</span></button>
