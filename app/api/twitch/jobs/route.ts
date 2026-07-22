@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import ffmpegPath from "ffmpeg-static";
 import { NextResponse } from "next/server";
 import { getCapturedTwitchSession } from "../../../lib/twitch-session";
-import { resolveVodPlaylist } from "../../../lib/hls";
+import { buildSparsePlaylist, resolveVodPlaylist } from "../../../lib/hls";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,6 +18,7 @@ type Job = {
   currentFormat?: Format;
   error?: string;
   outputs?: Partial<Record<Format, string>>;
+  sample?: { selected: number; total: number };
 };
 
 const root = process.cwd();
@@ -57,13 +58,17 @@ async function processJob(job: Job, manifestUrl: string, targetDuration: number,
     job.state = "probing";
     job.progress = 1;
     await save(job);
-    const { mediaUrl, duration: fullDuration } = await resolveVodPlaylist(manifestUrl);
+    const { duration: fullDuration, segments } = await resolveVodPlaylist(manifestUrl);
     const clipStart = Math.min(Math.max(0, startAt), Math.max(0, fullDuration - 1));
     const clipEnd = endAt > clipStart ? Math.min(endAt, fullDuration) : fullDuration;
-    const sourceDuration = clipEnd - clipStart;
-    const speed = sourceDuration / targetDuration;
+    const sparse = buildSparsePlaylist(segments, clipStart, clipEnd, targetDuration);
+    job.sample = { selected: sparse.selectedCount, total: sparse.totalCount };
+    await save(job);
+    const speed = sparse.selectedDuration / targetDuration;
     const focusRatio = Math.min(1, Math.max(.5, focus / 100));
     await mkdir(outputDir, { recursive: true });
+    const sparsePlaylist = path.join(workDir, `${job.id}-sample.m3u8`);
+    await writeFile(sparsePlaylist, sparse.content, "utf8");
 
     job.state = "processing";
     job.currentFormat = undefined;
@@ -73,8 +78,7 @@ async function processJob(job: Job, manifestUrl: string, targetDuration: number,
     const verticalOutput = path.join(outputDir, `${job.id}-vertical.mp4`);
     const filter = `[0:v]setpts=PTS/${speed},fps=24,split=2[wide][tall];[wide]scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2:color=0x120d1c,format=yuv420p[horizontal];[tall]crop='ih*9/16:ih:min(max(0,iw*${focusRatio}-ow/2),iw-ow):0',scale=720:1280,format=yuv420p[vertical]`;
     let lastSaved = 0;
-    const args = ["-hide_banner", "-loglevel", "error", "-stats", "-ss", String(clipStart), "-i", mediaUrl];
-    if (clipEnd < fullDuration) args.push("-t", String(sourceDuration));
+    const args = ["-hide_banner", "-loglevel", "error", "-stats", "-protocol_whitelist", "file,http,https,tcp,tls,crypto", "-fflags", "+genpts", "-i", sparsePlaylist];
     args.push(
       "-filter_complex", filter,
       "-map", "[horizontal]", "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "21", "-movflags", "+faststart", "-y", horizontalOutput,

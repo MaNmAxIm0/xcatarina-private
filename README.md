@@ -15,6 +15,8 @@ O processamento de VODs longas corre localmente, porque uma função Vercel não
 
 As saídas MP4 são guardadas em `outputs/`, que não é sincronizada com Git. A ligação autorizada é mantida apenas na memória do processo local e expira.
 
+Para VODs longas, o Studio não transfere a emissão completa: seleciona segmentos HLS distribuídos por todo o intervalo e cria simultaneamente as versões 16:9 e 9:16 numa única passagem do FFmpeg. O estado do processamento indica quantos segmentos foram escolhidos.
+
 ## Desenvolvimento
 
 Requer Node.js 22 ou superior.

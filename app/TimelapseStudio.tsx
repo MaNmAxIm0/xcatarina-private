@@ -5,7 +5,7 @@ import { upload } from "@vercel/blob/client";
 
 type Format = "horizontal" | "vertical";
 type PhotoSlot = { file: File | null; time: string; isLive: boolean; previewUrl: string };
-type LocalJob = { id: string; state: "queued" | "probing" | "processing" | "complete" | "error"; progress: number; currentFormat?: Format; error?: string; outputs?: Partial<Record<Format, string>> };
+type LocalJob = { id: string; state: "queued" | "probing" | "processing" | "complete" | "error"; progress: number; currentFormat?: Format; error?: string; outputs?: Partial<Record<Format, string>>; sample?: { selected: number; total: number } };
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -87,7 +87,7 @@ export function TimelapseStudio() {
         if (stopped) return;
         setProgress(job.progress || 0);
         if (job.state === "probing") setStatus("A verificar a duração e o acesso à VOD…");
-        if (job.state === "processing") setStatus(job.currentFormat ? `A criar a versão ${job.currentFormat === "vertical" ? "vertical 9:16" : "horizontal 16:9"}…` : "A criar simultaneamente os formatos 16:9 e 9:16…");
+        if (job.state === "processing") setStatus(job.currentFormat ? `A criar a versão ${job.currentFormat === "vertical" ? "vertical 9:16" : "horizontal 16:9"}…` : `A criar simultaneamente os formatos 16:9 e 9:16${job.sample ? ` com ${job.sample.selected} de ${job.sample.total} segmentos` : ""}…`);
         if (job.state === "complete") {
           setDownloads(job.outputs || {});
           setStatus("As duas versões MP4 estão prontas para descarregar e publicar.");
