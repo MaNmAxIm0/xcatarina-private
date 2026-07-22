@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildSparsePlaylist, resolveVodPlaylist } from "../app/lib/hls.ts";
+import { buildClipPlaylist, resolveVodPlaylist } from "../app/lib/hls.ts";
 
 test("selects the highest-bandwidth HLS rendition and sums its segments", async () => {
   const requested = [];
@@ -28,19 +28,20 @@ test("selects the highest-bandwidth HLS rendition and sums its segments", async 
   ]);
 });
 
-test("creates an evenly distributed sparse playlist for a long VOD", () => {
-  const segments = Array.from({ length: 360 }, (_, index) => ({
+test("keeps every segment in a continuous timelapse interval", () => {
+  const segments = Array.from({ length: 12 }, (_, index) => ({
     url: `https://video-edge.example/${index}.ts?auth=x`,
     duration: 10,
     start: index * 10,
   }));
-  const sample = buildSparsePlaylist(segments, 0, 3600, 60);
-  assert.equal(sample.totalCount, 360);
-  assert.equal(sample.selectedCount, 48);
-  assert.equal(sample.selectedDuration, 480);
-  assert.match(sample.content, /0\.ts\?auth=x/);
-  assert.match(sample.content, /359\.ts\?auth=x/);
-  assert.equal((sample.content.match(/#EXTINF:/g) || []).length, 48);
+  const clip = buildClipPlaylist(segments, 23, 87);
+  assert.equal(clip.selectedCount, 7);
+  assert.equal(clip.trimStart, 3);
+  assert.equal(clip.clipDuration, 64);
+  assert.equal((clip.content.match(/#EXTINF:/g) || []).length, 7);
+  assert.match(clip.content, /2\.ts\?auth=x/);
+  assert.match(clip.content, /8\.ts\?auth=x/);
+  assert.doesNotMatch(clip.content, /#EXT-X-DISCONTINUITY/);
 });
 
 test("rejects an expired or empty playlist", async () => {

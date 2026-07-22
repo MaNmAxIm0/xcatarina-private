@@ -2,7 +2,7 @@ import { put } from "@vercel/blob";
 import { handleUpload, type HandleUploadBody } from "@vercel/blob/client";
 import { NextResponse } from "next/server";
 
-type VideoMetadata = { title: string; description: string; category: "arte" | "lego"; duration: string; format: "horizontal" | "vertical" };
+type VideoMetadata = { title: string; description: string; category: "arte" | "lego"; duration: string; format: "horizontal" | "vertical"; publicationId: string };
 
 function requesterIp(request: Request) {
   return (request.headers.get("x-vercel-forwarded-for") || request.headers.get("x-forwarded-for") || "").split(",")[0].trim();
@@ -25,7 +25,7 @@ export async function POST(request: Request) {
         if (!authorizeIp(request)) throw new Error("Este IP não tem permissão para publicar.");
         if (!/^videos\/(arte|lego)\/[a-zA-Z0-9-]+\.(webm|mp4)$/.test(pathname)) throw new Error("Nome de vídeo inválido.");
         const metadata = JSON.parse(clientPayload || "{}") as VideoMetadata;
-        if (!metadata.title || !["arte", "lego"].includes(metadata.category)) throw new Error("Metadados inválidos.");
+        if (!metadata.title || !["arte", "lego"].includes(metadata.category) || !/^[a-f0-9-]{36}$/i.test(metadata.publicationId || "")) throw new Error("Metadados inválidos.");
         return { allowedContentTypes: ["video/webm", "video/mp4"], addRandomSuffix: true, tokenPayload: JSON.stringify(metadata) };
       },
       onUploadCompleted: async ({ blob, tokenPayload }) => {

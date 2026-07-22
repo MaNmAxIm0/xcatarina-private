@@ -47,26 +47,30 @@ export async function resolveVodPlaylist(manifestUrl: string, fetchPlaylist: Fet
   return { mediaUrl, duration, segments };
 }
 
-export function buildSparsePlaylist(segments: HlsSegment[], startAt: number, endAt: number, targetDuration: number, sampleFactor = 8) {
+/** Keeps every segment between the first and last marker so FFmpeg accelerates
+ * the actual continuous video rather than a set of distant still-like excerpts. */
+export function buildClipPlaylist(segments: HlsSegment[], startAt: number, endAt: number) {
   const eligible = segments.filter((segment) => segment.start + segment.duration > startAt && segment.start < endAt);
   if (!eligible.length) throw new Error("O intervalo escolhido não contém vídeo.");
-  const averageDuration = eligible.reduce((total, segment) => total + segment.duration, 0) / eligible.length;
-  const desiredCount = Math.max(1, Math.min(eligible.length, Math.ceil((targetDuration * sampleFactor) / averageDuration)));
-  const indexes = new Set<number>();
-  if (desiredCount === 1) indexes.add(Math.floor((eligible.length - 1) / 2));
-  else for (let index = 0; index < desiredCount; index += 1) indexes.add(Math.round((index * (eligible.length - 1)) / (desiredCount - 1)));
-  const selected = [...indexes].sort((a, b) => a - b).map((index) => eligible[index]);
-  const selectedDuration = selected.reduce((total, segment) => total + segment.duration, 0);
-  const target = Math.max(1, Math.ceil(Math.max(...selected.map((segment) => segment.duration))));
-  const body = selected.flatMap((segment, index) => [
-    ...(index ? ["#EXT-X-DISCONTINUITY"] : []),
+
+  const first = eligible[0];
+  const last = eligible[eligible.length - 1];
+  const selectedDuration = eligible.reduce((total, segment) => total + segment.duration, 0);
+  const trimStart = Math.max(0, startAt - first.start);
+  const trimEnd = Math.min(selectedDuration, endAt - first.start, last.start + last.duration - first.start);
+  const clipDuration = trimEnd - trimStart;
+  if (!Number.isFinite(clipDuration) || clipDuration <= 0) throw new Error("O intervalo escolhido é demasiado curto.");
+
+  const target = Math.max(1, Math.ceil(Math.max(...eligible.map((segment) => segment.duration))));
+  const body = eligible.flatMap((segment) => [
     `#EXTINF:${segment.duration.toFixed(6)},`,
     segment.url,
   ]);
+
   return {
     content: ["#EXTM3U", "#EXT-X-VERSION:3", `#EXT-X-TARGETDURATION:${target}`, "#EXT-X-MEDIA-SEQUENCE:0", ...body, "#EXT-X-ENDLIST", ""].join("\n"),
-    selectedDuration,
-    selectedCount: selected.length,
-    totalCount: eligible.length,
+    selectedCount: eligible.length,
+    trimStart,
+    clipDuration,
   };
 }
