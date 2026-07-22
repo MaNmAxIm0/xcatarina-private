@@ -8,6 +8,7 @@ const display = Fraunces({ variable: "--font-display", subsets: ["latin"] });
 export const metadata: Metadata = {
   title: "Estúdio xCatarina — Timelapses",
   description: "Cria timelapses das lives da xCatarina em 16:9 ou 9:16.",
+  icons: { icon: "/favicon.svg", shortcut: "/favicon.svg" },
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
