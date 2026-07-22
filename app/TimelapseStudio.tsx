@@ -1,6 +1,7 @@
 "use client";
 
 import { ChangeEvent, useEffect, useRef, useState } from "react";
+import { upload } from "@vercel/blob/client";
 
 type Format = "horizontal" | "vertical";
 type PhotoSlot = { file: File | null; time: string };
@@ -48,6 +49,11 @@ export function TimelapseStudio() {
   const [progress, setProgress] = useState(0);
   const [status, setStatus] = useState("Escolhe uma gravação para começar.");
   const [downloads, setDownloads] = useState<Partial<Record<Format, string>>>({});
+  const [publishTitle, setPublishTitle] = useState("");
+  const [publishDescription, setPublishDescription] = useState("");
+  const [publishProgress, setPublishProgress] = useState(0);
+  const [publishing, setPublishing] = useState<Format | null>(null);
+  const [publishStatus, setPublishStatus] = useState("");
 
   useEffect(() => () => {
     if (sourceUrl.startsWith("blob:")) URL.revokeObjectURL(sourceUrl);
@@ -238,6 +244,28 @@ export function TimelapseStudio() {
     }
   };
 
+  const publishGenerated = async (outputFormat: Format) => {
+    const generatedUrl = downloads[outputFormat];
+    if (!generatedUrl) return;
+    if (!publishTitle.trim()) { setPublishStatus("Escreve um título antes de publicar."); return; }
+    setPublishing(outputFormat); setPublishProgress(0); setPublishStatus("A enviar para o site público…");
+    try {
+      const body = await fetch(generatedUrl).then((response) => response.blob());
+      const safeTitle = publishTitle.trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9-]+/g, "-").replace(/^-|-$/g, "").slice(0, 70) || "timelapse";
+      const pathname = `videos/${category}/${Date.now()}-${outputFormat}-${safeTitle}.webm`;
+      await upload(pathname, body, {
+        access: "public",
+        handleUploadUrl: "/api/upload",
+        multipart: true,
+        clientPayload: JSON.stringify({ title: publishTitle.trim(), description: publishDescription.trim(), category, duration: `${String(Math.floor(duration / 60)).padStart(2, "0")}:${String(duration % 60).padStart(2, "0")}`, format: outputFormat }),
+        onUploadProgress: ({ percentage }) => setPublishProgress(Math.round(percentage)),
+      });
+      setPublishStatus("Publicado. O vídeo vai aparecer no arquivo público dentro de instantes.");
+    } catch (error) {
+      setPublishStatus(error instanceof Error ? error.message : "Não foi possível publicar o vídeo.");
+    } finally { setPublishing(null); }
+  };
+
   return (
     <main className="studio-shell">
       <header className="topbar">
@@ -316,6 +344,16 @@ export function TimelapseStudio() {
             {downloads.horizontal && <a className="download" href={downloads.horizontal} download={`xcatarina-${category}-horizontal-timelapse.webm`}>Descarregar 16:9</a>}
             {downloads.vertical && <a className="download" href={downloads.vertical} download={`xcatarina-${category}-vertical-timelapse.webm`}>Descarregar 9:16</a>}
           </div>
+          {(downloads.horizontal || downloads.vertical) && <div className="publish-box">
+            <span>PUBLICAR NO SITE PÚBLICO</span>
+            <input aria-label="Título público" placeholder="Título do vídeo" value={publishTitle} onChange={(event) => setPublishTitle(event.target.value)} />
+            <textarea aria-label="Descrição pública" placeholder="Descrição curta (opcional)" rows={2} value={publishDescription} onChange={(event) => setPublishDescription(event.target.value)} />
+            <div className="publish-actions">
+              <button type="button" disabled={Boolean(publishing)} onClick={() => publishGenerated("horizontal")}>{publishing === "horizontal" ? `${publishProgress}%` : "Publicar 16:9"}</button>
+              <button type="button" disabled={Boolean(publishing)} onClick={() => publishGenerated("vertical")}>{publishing === "vertical" ? `${publishProgress}%` : "Publicar 9:16"}</button>
+            </div>
+            <output>{publishStatus}</output>
+          </div>}
         </aside>
       </section>
 

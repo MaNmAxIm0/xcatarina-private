@@ -89,6 +89,14 @@ h1 em { color:#e5679f; font-weight:650; }
 .generate span { font-size:22px; }
 .download { margin-top:9px; justify-content:center; background:var(--pink); color:var(--ink); }
 .download-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+.publish-box { margin-top:12px; padding:15px; display:flex; flex-direction:column; gap:8px; border:1px solid #44394a; border-radius:10px; background:#241d29; }
+.publish-box>span { color:var(--yellow); font-size:9px; font-weight:900; letter-spacing:.14em; }
+.publish-box input,.publish-box textarea { width:100%; padding:10px; border:1px solid #4b4050; border-radius:7px; background:#17121b; color:#fff; resize:vertical; font-size:11px; }
+.publish-actions { display:grid; grid-template-columns:1fr 1fr; gap:7px; }
+.publish-actions button { min-height:40px; border:0; border-radius:7px; background:var(--blue); color:var(--ink); font-size:11px; font-weight:900; cursor:pointer; }
+.publish-actions button:last-child { background:var(--pink); }
+.publish-actions button:disabled { opacity:.5; }
+.publish-box output { min-height:15px; color:#c9bfcd; font-size:10px; line-height:1.4; }
 footer { max-width:1264px; margin:34px auto; display:flex; justify-content:space-between; color:var(--muted); font-size:11px; }
 footer b { color:#dc5f95; }
 @media (max-width:900px) { .hero { grid-template-columns:1fr; gap:24px; padding:50px 24px 38px; } .workspace { margin:0 16px; grid-template-columns:1fr; } .controls { padding:34px 24px; } .preview-panel { min-height:620px; padding:28px 22px; } footer { padding:0 24px; } }

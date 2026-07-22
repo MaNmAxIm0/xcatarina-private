@@ -6,14 +6,15 @@
     "node": ">=22.13.0"
   },
   "scripts": {
-    "dev": "vinext dev",
-    "build": "vinext build",
-    "start": "vinext start",
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
     "test": "npm run build && node --test tests/rendered-html.test.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate"
   },
   "dependencies": {
+    "@vercel/blob": "^2.6.1",
     "drizzle-orm": "0.45.2",
     "next": "16.2.6",
     "react": "19.2.6",
