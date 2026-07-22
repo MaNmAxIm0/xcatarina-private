@@ -4,7 +4,7 @@ import { ChangeEvent, useEffect, useRef, useState } from "react";
 import { upload } from "@vercel/blob/client";
 
 type Format = "horizontal" | "vertical";
-type PhotoSlot = { file: File | null; time: string };
+type PhotoSlot = { file: File | null; time: string; isLive: boolean; previewUrl: string };
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -39,11 +39,11 @@ export function TimelapseStudio() {
   const [focus, setFocus] = useState(77);
   const [duration, setDuration] = useState(15);
   const [photoSlots, setPhotoSlots] = useState<PhotoSlot[]>([
-    { file: null, time: "00:00:00" },
-    { file: null, time: "00:00:00" },
-    { file: null, time: "00:00:00" },
+    { file: null, time: "00:00:00", isLive: true, previewUrl: "" },
+    { file: null, time: "00:00:00", isLive: true, previewUrl: "" },
+    { file: null, time: "00:00:00", isLive: true, previewUrl: "" },
   ]);
-  const selectedSlots = photoSlots.filter((slot): slot is { file: File; time: string } => Boolean(slot.file));
+  const selectedSlots = photoSlots.filter((slot): slot is PhotoSlot & { file: File } => Boolean(slot.file));
   const photos = selectedSlots.map((slot) => slot.file);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -132,14 +132,22 @@ export function TimelapseStudio() {
   };
 
   const setPhoto = (index: number, file: File | null) => {
-    setPhotoSlots((slots) => slots.map((slot, slotIndex) => slotIndex === index ? { ...slot, file } : slot));
+    setPhotoSlots((slots) => slots.map((slot, slotIndex) => {
+      if (slotIndex !== index) return slot;
+      if (slot.previewUrl) URL.revokeObjectURL(slot.previewUrl);
+      return { ...slot, file, previewUrl: file ? URL.createObjectURL(file) : "" };
+    }));
   };
 
   const setPhotoTime = (index: number, time: string) => {
     setPhotoSlots((slots) => slots.map((slot, slotIndex) => slotIndex === index ? { ...slot, time } : slot));
   };
 
-  const pastePhoto = (index: number, event: React.ClipboardEvent<HTMLLabelElement>) => {
+  const setPhotoLive = (index: number, isLive: boolean) => {
+    setPhotoSlots((slots) => slots.map((slot, slotIndex) => slotIndex === index ? { ...slot, isLive } : slot));
+  };
+
+  const pastePhoto = (index: number, event: React.ClipboardEvent<HTMLDivElement>) => {
     const file = Array.from(event.clipboardData.files).find((item) => item.type.startsWith("image/"));
     if (file) { event.preventDefault(); setPhoto(index, file); setStatus(`Imagem ${index + 1} colada com sucesso.`); }
   };
@@ -164,8 +172,8 @@ export function TimelapseStudio() {
     return { image, url };
   };
 
-  const drawLoadedPhoto = (ctx: CanvasRenderingContext2D, image: HTMLImageElement) => {
-    const scale = Math.max(ctx.canvas.width / image.width, ctx.canvas.height / image.height);
+  const drawLoadedPhoto = (ctx: CanvasRenderingContext2D, image: HTMLImageElement, cropBorders: boolean) => {
+    const scale = cropBorders ? Math.max(ctx.canvas.width / image.width, ctx.canvas.height / image.height) : Math.min(ctx.canvas.width / image.width, ctx.canvas.height / image.height);
     const width = image.width * scale;
     const height = image.height * scale;
     ctx.drawImage(image, (ctx.canvas.width - width) / 2, (ctx.canvas.height - height) / 2, width, height);
@@ -186,8 +194,12 @@ export function TimelapseStudio() {
   const generate = async () => {
     const video = videoRef.current;
     const canvas = canvasRef.current;
-    if (!video || !canvas || (!sourceUrl && photos.length === 0)) {
+    if (!canvas || (!sourceUrl && photos.length === 0)) {
       setStatus("Escolhe uma gravação ou coloca pelo menos uma imagem.");
+      return;
+    }
+    if (sourceUrl && !video) {
+      setStatus("A gravaÃ§Ã£o ainda nÃ£o estÃ¡ pronta. Aguarda o carregamento e tenta novamente.");
       return;
     }
     setBusy(true);
@@ -196,7 +208,7 @@ export function TimelapseStudio() {
     setDownloads({});
     setStatus("A criar o timelapse… mantém esta página aberta.");
     try {
-      if (sourceUrl && (!video.duration || Number.isNaN(video.duration))) {
+      if (sourceUrl && video && (!video.duration || Number.isNaN(video.duration))) {
         await waitFor(video, "loadedmetadata");
       }
       const loadedPhotos = await Promise.all(photos.map(loadPhoto));
@@ -218,19 +230,19 @@ export function TimelapseStudio() {
         recorder.start(1000);
         const frames = duration * 24;
         for (let frame = 0; frame < frames; frame += 1) {
-          if (sourceUrl) {
+          if (sourceUrl && video) {
             const target = Math.min(video.duration - 0.04, (frame / Math.max(1, frames - 1)) * video.duration);
             if (Math.abs(video.currentTime - target) > 0.015) { video.currentTime = target; await waitFor(video, "seeked"); }
             drawFrame(ctx, video, outputFormat);
           } else {
             const imageIndex = Math.min(loadedPhotos.length - 1, Math.floor((frame / frames) * loadedPhotos.length));
-            drawLoadedPhoto(ctx, loadedPhotos[imageIndex].image);
-            drawTimestamp(ctx, selectedSlots[imageIndex].time);
+            drawLoadedPhoto(ctx, loadedPhotos[imageIndex].image, !selectedSlots[imageIndex].isLive);
+            if (selectedSlots[imageIndex].isLive) drawTimestamp(ctx, selectedSlots[imageIndex].time);
           }
           if (frame % 6 === 0) setProgress(Math.round(((formatIndex + frame / frames) / formats.length) * 94));
           await sleep(1000 / 24);
         }
-        if (sourceUrl) for (let index = 0; index < photos.length; index += 1) { await drawPhoto(ctx, photos[index]); drawTimestamp(ctx, selectedSlots[index].time); await sleep(650); }
+        if (sourceUrl && video) for (let index = 0; index < photos.length; index += 1) { await drawPhoto(ctx, photos[index]); drawTimestamp(ctx, selectedSlots[index].time); await sleep(650); }
         recorder.stop();
         await finished;
         results[outputFormat] = URL.createObjectURL(new Blob(chunks, { type: mimeType }));
@@ -322,19 +334,22 @@ export function TimelapseStudio() {
           </div>
           <div className="photo-heading"><b>Imagens e horários</b><span>A 3.ª imagem é opcional</span></div>
           <div className="photo-slots">
-            {photoSlots.map((slot, index) => <label className={slot.file ? "photo-slot filled" : "photo-slot"} key={index} tabIndex={0} onPaste={(event) => pastePhoto(index, event)}>
+            {photoSlots.map((slot, index) => <div className={slot.file ? "photo-slot filled" : "photo-slot"} key={index} tabIndex={0} onPaste={(event) => pastePhoto(index, event)}>
               <span className="photo-number">0{index + 1}</span>
+              {slot.previewUrl ? <img className="photo-preview" src={slot.previewUrl} alt={`Pré-visualização da imagem ${index + 1}`} /> : <div className="photo-placeholder">Imagem {index + 1}</div>}
               <b>{slot.file?.name || "Colar ou escolher imagem"}</b>
               <small>Ctrl+V nesta caixa</small>
-              <input type="file" accept="image/*" onChange={(event) => setPhoto(index, event.target.files?.[0] || null)} />
+              <label className="file-button">Escolher ficheiro<input type="file" accept="image/*" onChange={(event) => setPhoto(index, event.target.files?.[0] || null)} /></label>
+              {index === 2 && <label className="live-check"><input type="checkbox" checked={slot.isLive} onChange={(event) => setPhotoLive(index, event.target.checked)} /> Imagem da live</label>}
               <input className="time-input" aria-label={`Horário da imagem ${index + 1}`} type="text" inputMode="numeric" placeholder="HH:MM:SS" value={slot.time} onChange={(event) => setPhotoTime(index, event.target.value)} />
-            </label>)}
+            </div>)}
           </div>
         </div>
 
         <aside className="preview-panel">
           <div className="preview-head"><span>PRÉ-VISUALIZAÇÃO</span><span>{format === "vertical" ? "9:16" : "16:9"}</span></div>
           <div className={`canvas-wrap ${format}`}>
+            {!sourceUrl && <canvas ref={canvasRef} aria-label="Pré-visualização do timelapse" style={{ display: "none" }} />}
             {sourceUrl ? <canvas ref={canvasRef} aria-label="Pré-visualização do timelapse" /> : <div className="empty-preview"><span>✦</span><b>O teu timelapse aparece aqui</b><small>Escolhe uma gravação para começar</small></div>}
           </div>
           {twitchEmbed && <div className="twitch-preview"><iframe title="Pré-visualização Twitch" src={twitchEmbed} allowFullScreen /></div>}

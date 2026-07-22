@@ -67,6 +67,7 @@ h1 em { color:#e5679f; font-weight:650; }
 .photo-slot small { color:var(--muted); font-size:9px; }
 .photo-number { position:absolute; top:8px; left:9px; color:#e5679f; font-size:9px; font-weight:900; }
 .photo-slot .time-input { width:100%; margin-top:6px; padding:8px 6px; border:1px solid #d8cfd4; border-radius:7px; background:#fff; text-align:center; font-size:10px; }
+.photo-preview{width:100%;height:74px;object-fit:contain;border-radius:7px;background:#181321}.photo-placeholder{width:100%;height:74px;display:grid;place-items:center;border-radius:7px;background:#f6e9ef;color:var(--muted);font-size:10px}.file-button{display:inline-flex;align-items:center;justify-content:center;min-height:30px;padding:6px 10px;border-radius:7px;background:var(--ink);color:#fff;font-size:10px;font-weight:800;cursor:pointer}.file-button input{display:none}.live-check{display:flex;align-items:center;gap:5px;color:var(--muted);font-size:9px}.live-check input{width:auto}
 .preview-panel { background:var(--ink); color:#fff; padding:38px; display:flex; flex-direction:column; min-width:0; }
 .preview-head { display:flex; justify-content:space-between; color:#a9a0af; font-size:10px; font-weight:900; letter-spacing:.14em; margin-bottom:16px; }
 .canvas-wrap { flex:1; min-height:390px; display:grid; place-items:center; border-radius:14px; overflow:hidden; background:radial-gradient(circle at 20% 15%,#4d344a,transparent 33%),#0d0a12; border:1px solid #3b3440; }
