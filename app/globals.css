@@ -111,6 +111,7 @@ h1 em { color:#e5679f; font-weight:650; }
 .publish-box { margin-top:12px; padding:15px; display:flex; flex-direction:column; gap:8px; border:1px solid #44394a; border-radius:10px; background:#241d29; }
 .publish-box>span { color:var(--yellow); font-size:9px; font-weight:900; letter-spacing:.14em; }
 .publish-box input,.publish-box textarea { width:100%; padding:10px; border:1px solid #4b4050; border-radius:7px; background:#17121b; color:#fff; resize:vertical; font-size:11px; }
+.clear-studio{width:100%;margin-top:12px;padding:12px;border:1px solid #5e5267;border-radius:7px;background:transparent;color:#d9cfdc;font-family:inherit;font-size:10px;font-weight:700;cursor:pointer}.clear-studio:hover{border-color:var(--pink);color:#fff}.clear-studio:disabled{opacity:.45;cursor:not-allowed}
 .publish-actions { display:grid; grid-template-columns:1fr 1fr; gap:7px; }
 .publish-actions button { min-height:40px; border:0; border-radius:7px; background:var(--blue); color:var(--ink); font-size:11px; font-weight:900; cursor:pointer; }
 .publish-actions button:last-child { background:var(--pink); }

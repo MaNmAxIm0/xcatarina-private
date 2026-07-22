@@ -6,8 +6,9 @@ export type CapturedSession = {
 
 const state = globalThis as typeof globalThis & { xcatarinaTwitchSession?: CapturedSession };
 
-export function setCapturedTwitchSession(session: CapturedSession) {
-  state.xcatarinaTwitchSession = session;
+export function setCapturedTwitchSession(session: CapturedSession | null) {
+  if (session) state.xcatarinaTwitchSession = session;
+  else delete state.xcatarinaTwitchSession;
 }
 
 export function getCapturedTwitchSession() {

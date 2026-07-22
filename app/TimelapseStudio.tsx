@@ -2,11 +2,14 @@
 /* eslint-disable @next/next/no-img-element -- previews use local blob URLs that next/image cannot optimize */
 
 import { ChangeEvent, useCallback, useEffect, useRef, useState } from "react";
-import { upload } from "@vercel/blob/client";
 
 type Format = "horizontal" | "vertical";
+const DURATION_VARIANTS = [8, 15, 30, 45, 60, 90] as const;
+type VariantDownloads = Record<string, Partial<Record<Format, string>>>;
 type PhotoSlot = { file: File | null; time: string; isLive: boolean; previewUrl: string };
-type LocalJob = { id: string; state: "queued" | "probing" | "processing" | "complete" | "error"; progress: number; currentFormat?: Format; error?: string; outputs?: Partial<Record<Format, string>>; segmentCount?: number };
+type LocalJob = { id: string; state: "queued" | "probing" | "processing" | "complete" | "error"; progress: number; currentFormat?: Format; error?: string; outputs?: Partial<Record<Format, string>>; variants?: VariantDownloads; segmentCount?: number; duration?: number; baseDuration?: number; startAt?: number; endAt?: number };
+type ReusableJob = { id: string; duration: number; startAt: number; endAt: number };
+type LocalBase = { url: string; duration: number; startAt: number; endAt: number; sourceUrl: string };
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -41,6 +44,7 @@ export function TimelapseStudio() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [sourceName, setSourceName] = useState("");
+  const [sourceInputKey, setSourceInputKey] = useState(0);
   const [sourceUrl, setSourceUrl] = useState("");
   const [twitchUrl, setTwitchUrl] = useState("");
   const [twitchEmbed, setTwitchEmbed] = useState("");
@@ -48,11 +52,13 @@ export function TimelapseStudio() {
   const [vodConnected, setVodConnected] = useState(false);
   const [connectedVodId, setConnectedVodId] = useState("");
   const [jobId, setJobId] = useState("");
+  const [reusableJob, setReusableJob] = useState<ReusableJob | null>(null);
+  const localBaseRef = useRef<LocalBase | null>(null);
   const [startAt, setStartAt] = useState("");
   const [endAt, setEndAt] = useState("");
   const [category, setCategory] = useState<"arte" | "lego">("lego");
   const [focus, setFocus] = useState(77);
-  const [duration, setDuration] = useState(15);
+  const [duration, setDuration] = useState(30);
   const [photoSlots, setPhotoSlots] = useState<PhotoSlot[]>([
     { file: null, time: "", isLive: true, previewUrl: "" },
     { file: null, time: "", isLive: true, previewUrl: "" },
@@ -63,6 +69,7 @@ export function TimelapseStudio() {
   const [progress, setProgress] = useState(0);
   const [status, setStatus] = useState("Escolhe uma gravação para começar.");
   const [downloads, setDownloads] = useState<Partial<Record<Format, string>>>({});
+  const [variantDownloads, setVariantDownloads] = useState<VariantDownloads>({});
   const [publicationId, setPublicationId] = useState("");
   const [publishTitle, setPublishTitle] = useState("");
   const [publishDescription, setPublishDescription] = useState("");
@@ -87,6 +94,22 @@ export function TimelapseStudio() {
   }, []);
 
   useEffect(() => {
+    const activeJob = window.localStorage.getItem("xcatarina-active-job") || "";
+    const savedReusable = window.localStorage.getItem("xcatarina-reusable-job");
+    const restoreTimer = window.setTimeout(() => {
+      if (activeJob) {
+        setJobId(activeJob);
+        setBusy(true);
+        setStatus("A recuperar o processamento que ficou ativo…");
+      }
+      if (savedReusable) {
+        try { setReusableJob(JSON.parse(savedReusable) as ReusableJob); } catch { window.localStorage.removeItem("xcatarina-reusable-job"); }
+      }
+    }, 0);
+    return () => window.clearTimeout(restoreTimer);
+  }, []);
+
+  useEffect(() => {
     if (!jobId) return;
     let stopped = false;
     const check = async () => {
@@ -98,12 +121,20 @@ export function TimelapseStudio() {
         if (job.state === "processing") setStatus(job.currentFormat ? `A criar a versão ${job.currentFormat === "vertical" ? "vertical 9:16" : "horizontal 16:9"}…` : `A acelerar o intervalo completo em 1080p60${job.segmentCount ? ` (${job.segmentCount} segmentos contínuos)` : ""}…`);
         if (job.state === "complete") {
           setDownloads(job.outputs || {});
+          setVariantDownloads(job.variants || (job.outputs ? { "30": job.outputs } : {}));
+          if (job.duration) {
+            const reusable = { id: job.id, duration: job.baseDuration || job.duration, startAt: job.startAt || 0, endAt: job.endAt || 0 };
+            setReusableJob(reusable);
+            window.localStorage.setItem("xcatarina-reusable-job", JSON.stringify(reusable));
+          }
+          window.localStorage.removeItem("xcatarina-active-job");
           setPublicationId(crypto.randomUUID());
-          setStatus("As duas versões MP4 estão prontas para descarregar e publicar.");
+          setStatus(job.duration && job.duration > 90 ? `As 6 durações públicas e a versão local de ${job.duration / 60} minutos estão prontas.` : "As 6 durações, em 16:9 e 9:16, estão prontas para descarregar e publicar.");
           setBusy(false);
           setJobId("");
         }
         if (job.state === "error") {
+          window.localStorage.removeItem("xcatarina-active-job");
           setStatus(job.error || "Não foi possível processar a VOD.");
           setBusy(false);
           setJobId("");
@@ -116,11 +147,6 @@ export function TimelapseStudio() {
     const timer = window.setInterval(check, 2000);
     return () => { stopped = true; window.clearInterval(timer); };
   }, [jobId]);
-
-  useEffect(() => () => {
-    if (sourceUrl.startsWith("blob:")) URL.revokeObjectURL(sourceUrl);
-    Object.values(downloads).forEach((url) => url && URL.revokeObjectURL(url));
-  }, [sourceUrl, downloads]);
 
   const verticalCrop = useCallback((width: number, height: number) => {
     const targetRatio = 9 / 16;
@@ -138,7 +164,7 @@ export function TimelapseStudio() {
 
   const drawWatermark = useCallback((ctx: CanvasRenderingContext2D) => {
     const canvas = ctx.canvas;
-    const width = Math.round(canvas.width * (canvas.width > canvas.height ? .285 : .43));
+    const width = Math.round(canvas.width * (canvas.width > canvas.height ? .285 : .57));
     const height = Math.round(width / 5);
     const x = Math.round(canvas.width * .022);
     const y = canvas.height - height - Math.round(canvas.height * .027);
@@ -173,7 +199,7 @@ export function TimelapseStudio() {
     ctx.restore();
   }, []);
 
-  const drawFrame = useCallback((ctx: CanvasRenderingContext2D, video: HTMLVideoElement, outputFormat: Format) => {
+  const drawFrame = useCallback((ctx: CanvasRenderingContext2D, video: HTMLVideoElement, outputFormat: Format, withWatermark = true) => {
     const canvas = ctx.canvas;
     ctx.fillStyle = "#120d1c";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -187,7 +213,7 @@ export function TimelapseStudio() {
       const crop = verticalCrop(video.videoWidth, video.videoHeight);
       ctx.drawImage(video, crop.x, crop.y, crop.width, crop.height, 0, 0, canvas.width, canvas.height);
     }
-    drawWatermark(ctx);
+    if (withWatermark) drawWatermark(ctx);
   }, [drawWatermark, verticalCrop]);
 
   const drawPreview = useCallback((ctx: CanvasRenderingContext2D, video: HTMLVideoElement) => {
@@ -254,10 +280,16 @@ export function TimelapseStudio() {
     const file = event.target.files?.[0];
     if (!file) return;
     if (sourceUrl.startsWith("blob:")) URL.revokeObjectURL(sourceUrl);
+    Object.values(downloads).forEach((url) => url?.startsWith("blob:") && URL.revokeObjectURL(url));
     setSourceUrl(URL.createObjectURL(file));
     setSourceName(file.name);
     setTwitchEmbed("");
+    setReusableJob(null);
+    window.localStorage.removeItem("xcatarina-reusable-job");
+    if (localBaseRef.current) URL.revokeObjectURL(localBaseRef.current.url);
+    localBaseRef.current = null;
     setDownloads({});
+    setVariantDownloads({});
     setStatus("Vídeo pronto. Confirma o enquadramento e gera o timelapse.");
   };
 
@@ -298,10 +330,6 @@ export function TimelapseStudio() {
   };
 
   const generateFromTwitch = async () => {
-    if (!vodConnected) {
-      setStatus("Instala o helper, abre a VOD na Twitch, inicia sessão e carrega no Play.");
-      return;
-    }
     const range = resolvedMarkerRange();
     const startSeconds = timeToSeconds(range.start);
     const endSeconds = range.end ? timeToSeconds(range.end) : null;
@@ -313,20 +341,36 @@ export function TimelapseStudio() {
       setStatus("O fim do intervalo deve ser posterior ao início.");
       return;
     }
+    const canReuse = reusableJob
+      && reusableJob.startAt === startSeconds
+      && reusableJob.endAt === (endSeconds || 0)
+      && Math.max(90, duration) <= reusableJob.duration;
+    if (!vodConnected && !canReuse) {
+      setStatus("Instala o helper, abre a VOD na Twitch, inicia sessão e carrega no Play.");
+      return;
+    }
     setBusy(true);
     setProgress(0);
     setDownloads({});
+    setVariantDownloads({});
     setPublicationId("");
     setStatus(`A iniciar o vídeo acelerado entre ${range.start}${range.end ? ` e ${range.end}` : " e o fim da VOD"}…`);
     try {
+      const requestBody = new FormData();
+      requestBody.set("duration", String(duration));
+      requestBody.set("focus", String(focus));
+      requestBody.set("start", range.start);
+      requestBody.set("end", range.end);
+      if (canReuse) requestBody.set("reuseJobId", reusableJob.id);
+      if (photoSlots[2].file) requestBody.set("outroImage", photoSlots[2].file);
       const response = await fetch("/api/twitch/jobs", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ duration, focus, start: range.start, end: range.end }),
+        body: requestBody,
       });
       const result = await response.json() as { id?: string; error?: string };
       if (!response.ok || !result.id) throw new Error(result.error || "Não foi possível iniciar o processamento.");
       setJobId(result.id);
+      window.localStorage.setItem("xcatarina-active-job", result.id);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Não foi possível iniciar o processamento.");
       setBusy(false);
@@ -400,11 +444,19 @@ export function TimelapseStudio() {
       const clipEnd = requestedEnd === null ? video.duration : Math.max(0, Math.min(video.duration, requestedEnd));
       if (clipEnd <= clipStart) throw new Error("O fim do intervalo deve ser posterior ao início.");
       if (clipEnd - clipStart < duration) throw new Error("A duração final tem de ser igual ou inferior ao intervalo escolhido para haver aceleração real.");
-      const results: Partial<Record<Format, string>> = {};
-      const formats: Format[] = ["horizontal", "vertical"];
-      for (let formatIndex = 0; formatIndex < formats.length; formatIndex += 1) {
-        const outputFormat = formats[formatIndex];
-        setStatus(`A criar a versão ${outputFormat === "horizontal" ? "horizontal 1080p60" : "vertical 1080p60"}…`);
+      const processingVideo = document.createElement("video");
+      processingVideo.muted = true;
+      processingVideo.preload = "auto";
+      processingVideo.src = sourceUrl;
+      processingVideo.load();
+      await waitFor(processingVideo, "loadedmetadata");
+      let endingImage: HTMLImageElement | null = null;
+      if (photoSlots[2].previewUrl) {
+        endingImage = new Image();
+        endingImage.src = photoSlots[2].previewUrl;
+        await new Promise<void>((resolve, reject) => { endingImage!.onload = () => resolve(); endingImage!.onerror = () => reject(new Error("Não foi possível ler a terceira imagem.")); });
+      }
+      const record = async (input: HTMLVideoElement, inputStart: number, inputEnd: number, outputDuration: number, outputFormat: Format, withWatermark: boolean, progressStart: number, progressSpan: number, outro: HTMLImageElement | null = null) => {
         canvas.width = outputFormat === "vertical" ? 1080 : 1920;
         canvas.height = outputFormat === "vertical" ? 1920 : 1080;
         const ctx = canvas.getContext("2d", { alpha: false });
@@ -413,25 +465,97 @@ export function TimelapseStudio() {
         const mimeType = ["video/mp4;codecs=avc1.64002a", "video/mp4;codecs=avc1.42e01e", "video/mp4", "video/webm;codecs=vp9", "video/webm"]
           .find((candidate) => MediaRecorder.isTypeSupported(candidate));
         if (!mimeType) throw new Error("Este navegador não consegue gravar o timelapse. Usa uma versão recente do Chrome.");
-        const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: outputFormat === "horizontal" ? 16_000_000 : 14_000_000 });
+        const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: withWatermark ? (outputFormat === "horizontal" ? 16_000_000 : 14_000_000) : 24_000_000 });
         const chunks: BlobPart[] = [];
         recorder.ondataavailable = (event) => event.data.size && chunks.push(event.data);
         const finished = new Promise<void>((resolve) => recorder.addEventListener("stop", () => resolve(), { once: true }));
         recorder.start(1000);
-        const frames = duration * 60;
+        const frames = outputDuration * 60;
+        const outroFrames = outro && withWatermark ? (outputDuration < 60 ? 2 : 3) * 60 : 0;
+        const mainFrames = frames - outroFrames;
         for (let frame = 0; frame < frames; frame += 1) {
-          const target = Math.min(clipEnd - .01, clipStart + (frame / Math.max(1, frames - 1)) * (clipEnd - clipStart));
-          if (Math.abs(video.currentTime - target) > .008) { video.currentTime = target; await waitFor(video, "seeked"); }
-          drawFrame(ctx, video, outputFormat);
-          if (frame % 10 === 0) setProgress(Math.round(((formatIndex + frame / frames) / formats.length) * 90));
+          if (frame < mainFrames) {
+            const target = Math.min(inputEnd - .01, inputStart + (frame / Math.max(1, mainFrames - 1)) * (inputEnd - inputStart));
+            if (Math.abs(input.currentTime - target) > .008) { input.currentTime = target; await waitFor(input, "seeked"); }
+            drawFrame(ctx, input, outputFormat, withWatermark);
+          } else if (outro) {
+            const coverScale = Math.max(canvas.width / outro.naturalWidth, canvas.height / outro.naturalHeight);
+            const coverWidth = outro.naturalWidth * coverScale;
+            const coverHeight = outro.naturalHeight * coverScale;
+            ctx.save();
+            ctx.filter = "blur(42px)";
+            ctx.globalAlpha = .86;
+            ctx.drawImage(outro, (canvas.width - coverWidth) / 2, (canvas.height - coverHeight) / 2, coverWidth, coverHeight);
+            ctx.restore();
+            const containScale = Math.min(canvas.width * .88 / outro.naturalWidth, canvas.height * .84 / outro.naturalHeight);
+            const imageWidth = outro.naturalWidth * containScale;
+            const imageHeight = outro.naturalHeight * containScale;
+            ctx.save();
+            ctx.globalAlpha = Math.min(1, (frame - mainFrames + 1) / 21);
+            ctx.drawImage(outro, (canvas.width - imageWidth) / 2, (canvas.height - imageHeight) / 2, imageWidth, imageHeight);
+            ctx.restore();
+            drawWatermark(ctx);
+          }
+          if (frame % 10 === 0) setProgress(Math.round(progressStart + (frame / frames) * progressSpan));
           await sleep(1000 / 60);
         }
         recorder.stop();
         await finished;
-        const mp4 = await ensureMp4(new Blob(chunks, { type: mimeType }));
-        results[outputFormat] = URL.createObjectURL(mp4);
+        return ensureMp4(new Blob(chunks, { type: mimeType }));
+      };
+
+      const previousBase = localBaseRef.current;
+      const canReuse = previousBase
+        && previousBase.sourceUrl === sourceUrl
+        && previousBase.startAt === clipStart
+        && previousBase.endAt === clipEnd
+        && duration <= previousBase.duration;
+      let baseUrl = canReuse && duration === previousBase.duration ? previousBase.url : "";
+      let createdBaseUrl = "";
+      if (!baseUrl) {
+        setStatus(canReuse ? "A encurtar o horizontal-base já gerado…" : "A criar o horizontal-base 1080p60 a partir da gravação…");
+        let baseInput = processingVideo;
+        let baseStart = clipStart;
+        let baseEnd = clipEnd;
+        if (canReuse) {
+          baseInput = document.createElement("video");
+          baseInput.muted = true;
+          baseInput.preload = "auto";
+          baseInput.src = previousBase.url;
+          baseInput.load();
+          await waitFor(baseInput, "loadedmetadata");
+          baseStart = 0;
+          baseEnd = previousBase.duration;
+        }
+        const baseBlob = await record(baseInput, baseStart, baseEnd, duration, "horizontal", false, 0, 55);
+        createdBaseUrl = URL.createObjectURL(baseBlob);
+        baseUrl = createdBaseUrl;
+      } else {
+        setProgress(55);
+      }
+
+      const baseVideo = document.createElement("video");
+      baseVideo.muted = true;
+      baseVideo.preload = "auto";
+      baseVideo.src = baseUrl;
+      baseVideo.load();
+      await waitFor(baseVideo, "loadedmetadata");
+      setStatus("A aplicar a marca de água ao horizontal 1080p60…");
+      const horizontal = await record(baseVideo, 0, duration, duration, "horizontal", true, 55, 20, endingImage);
+      setStatus("A criar o vertical a partir do horizontal-base…");
+      const vertical = await record(baseVideo, 0, duration, duration, "vertical", true, 75, 20, endingImage);
+      const results: Partial<Record<Format, string>> = {
+        horizontal: URL.createObjectURL(horizontal),
+        vertical: URL.createObjectURL(vertical),
+      };
+      if (canReuse) {
+        if (createdBaseUrl) URL.revokeObjectURL(createdBaseUrl);
+      } else {
+        if (previousBase) URL.revokeObjectURL(previousBase.url);
+        localBaseRef.current = { url: baseUrl, duration, startAt: clipStart, endAt: clipEnd, sourceUrl };
       }
       setDownloads(results);
+      setVariantDownloads({ [String(duration)]: results });
       setPublicationId(crypto.randomUUID());
       setProgress(100);
       setStatus("As duas versões MP4 1080p60 estão prontas para descarregar e publicar.");
@@ -443,58 +567,47 @@ export function TimelapseStudio() {
     }
   };
 
-  const uploadGenerated = async (outputFormat: Format, sharedPublicationId: string, progressStart = 0, progressSpan = 100) => {
-    const generatedUrl = downloads[outputFormat];
-    if (!generatedUrl) throw new Error(`Falta a versão ${outputFormat === "horizontal" ? "16:9" : "9:16"}.`);
-    const body = await fetch(generatedUrl).then((response) => response.blob());
-    if (!body.type.startsWith("video/mp4")) throw new Error("A versão gerada não está em MP4. Gera novamente no estúdio local.");
-    const safeTitle = publishTitle.trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9-]+/g, "-").replace(/^-|-$/g, "").slice(0, 70) || "timelapse";
-    const pathname = `videos/${category}/${Date.now()}-${outputFormat}-${safeTitle}.mp4`;
-    const metadata = {
-      title: publishTitle.trim(),
-      description: publishDescription.trim(),
-      category,
-      duration: `${String(Math.floor(duration / 60)).padStart(2, "0")}:${String(duration % 60).padStart(2, "0")}`,
-      format: outputFormat,
-      publicationId: sharedPublicationId,
-    };
-    const blob = await upload(pathname, body, {
-      access: "public",
-      handleUploadUrl: "/api/upload",
-      multipart: true,
-      clientPayload: JSON.stringify(metadata),
-      onUploadProgress: ({ percentage }) => setPublishProgress(Math.round(progressStart + percentage * (progressSpan / 100))),
-    });
-    return { blob, metadata };
-  };
-
-  const finalizeUpload = async ({ blob, metadata }: Awaited<ReturnType<typeof uploadGenerated>>) => {
-    const finalized = await fetch("/api/upload/finalize", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ blob: { url: blob.url, pathname: blob.pathname }, metadata }),
-    });
-    if (!finalized.ok) {
-      const result = await finalized.json().catch(() => ({})) as { error?: string };
-      throw new Error(result.error || "O vídeo foi enviado, mas não foi possível adicioná-lo ao arquivo público.");
-    }
-  };
-
   const publishBoth = async () => {
     if (!publishTitle.trim()) { setPublishStatus("Escreve um título antes de publicar."); return; }
-    if (!downloads.horizontal || !downloads.vertical) { setPublishStatus("Gera primeiro os dois formatos."); return; }
+    if (!DURATION_VARIANTS.every((seconds) => variantDownloads[String(seconds)]?.horizontal && variantDownloads[String(seconds)]?.vertical)) { setPublishStatus("Gera primeiro o pacote completo das 6 durações."); return; }
+    if (!reusableJob?.id) { setPublishStatus("Não foi encontrado o pacote local. Gera novamente a partir da VOD."); return; }
     const sharedPublicationId = publicationId || crypto.randomUUID();
     if (!publicationId) setPublicationId(sharedPublicationId);
-    setPublishing("both"); setPublishProgress(0); setPublishStatus("A publicar os dois formatos como um só vídeo…");
+    setPublishing("both"); setPublishProgress(0); setPublishStatus("A publicar as 12 versões como um só vídeo…");
     try {
-      const horizontal = await uploadGenerated("horizontal", sharedPublicationId, 0, 50);
-      const vertical = await uploadGenerated("vertical", sharedPublicationId, 50, 50);
-      await Promise.all([finalizeUpload(horizontal), finalizeUpload(vertical)]);
+      setPublishProgress(5);
+      const response = await fetch("/api/publish", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ jobId: reusableJob.id, publicationId: sharedPublicationId, title: publishTitle, description: publishDescription, category }) });
+      const result = await response.json().catch(() => ({})) as { error?: string };
+      if (!response.ok) throw new Error(result.error || "Não foi possível publicar no Cloudflare R2.");
       setPublishProgress(100);
-      setPublishStatus("Publicado: o 16:9 é o vídeo principal e o 9:16 fica disponível como formato alternativo.");
+      setPublishStatus("Publicado: 30 segundos em 16:9 é o principal; as outras 11 versões ficam disponíveis para download.");
     } catch (error) {
-      setPublishStatus(error instanceof Error ? error.message : "Não foi possível publicar os dois formatos.");
+      setPublishStatus(error instanceof Error ? error.message : "Não foi possível publicar o pacote completo.");
     } finally { setPublishing(null); }
+  };
+
+  const clearStudio = async () => {
+    if (busy || publishing) return;
+    if (!window.confirm("Limpar a VOD ligada, imagens, horários e vídeos temporários deste Studio? Os vídeos já publicados não serão apagados.")) return;
+    const ids = [jobId, reusableJob?.id || ""].filter(Boolean);
+    await Promise.all([
+      fetch("/api/twitch/session", { method: "DELETE" }).catch(() => undefined),
+      fetch("/api/twitch/jobs", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids, all: true }) }).catch(() => undefined),
+    ]);
+    if (sourceUrl.startsWith("blob:")) URL.revokeObjectURL(sourceUrl);
+    Object.values(downloads).forEach((url) => url?.startsWith("blob:") && URL.revokeObjectURL(url));
+    for (const variants of Object.values(variantDownloads)) Object.values(variants).forEach((url) => url?.startsWith("blob:") && URL.revokeObjectURL(url));
+    if (localBaseRef.current) URL.revokeObjectURL(localBaseRef.current.url);
+    photoSlots.forEach((slot) => slot.previewUrl && URL.revokeObjectURL(slot.previewUrl));
+    localBaseRef.current = null;
+    window.localStorage.removeItem("xcatarina-active-job");
+    window.localStorage.removeItem("xcatarina-reusable-job");
+    setJobId(""); setReusableJob(null); setVodConnected(false); setConnectedVodId("");
+    setSourceUrl(""); setSourceName(""); setSourceInputKey((value) => value + 1); setTwitchUrl(""); setTwitchEmbed("");
+    setStartAt(""); setEndAt(""); setDuration(30); setFocus(77);
+    setPhotoSlots([0, 1, 2].map(() => ({ file: null, time: "", isLive: true, previewUrl: "" })));
+    setDownloads({}); setVariantDownloads({}); setPublicationId(""); setPublishTitle(""); setPublishDescription(""); setPublishStatus(""); setPublishProgress(0);
+    setProgress(0); setStatus("Estúdio limpo. Escolhe uma nova VOD ou gravação.");
   };
 
   return (
@@ -528,13 +641,13 @@ export function TimelapseStudio() {
           </div>}
           <div className="or"><span />ou<span /></div>
           <label className="dropzone">
-            <input type="file" accept="video/*" onChange={chooseVideo} />
+            <input key={sourceInputKey} type="file" accept="video/*" onChange={chooseVideo} />
             <b>{sourceName || "Escolher gravação"}</b>
             <small>MP4, MOV ou WebM · o ficheiro fica neste dispositivo</small>
           </label>
 
           <div className="divider" />
-          <div className="step-heading"><span>02</span><div><h2>Enquadramento</h2><p>São sempre gerados dois MP4 1080p60: live 16:9 e recorte vertical 9:16.</p></div></div>
+          <div className="step-heading"><span>02</span><div><h2>Enquadramento</h2><p>A VOD gera 6 durações em 16:9 e 9:16; 30 segundos será a versão pública principal.</p></div></div>
           <div className="output-pair" aria-label="Formatos gerados">
             <span><i className="ratio wide" /><b>Live completa</b><small>1920 × 1080 · 60 fps</small></span>
             <span><i className="ratio tall" /><b>LEGO em foco</b><small>1080 × 1920 · 60 fps</small></span>
@@ -547,11 +660,11 @@ export function TimelapseStudio() {
           <label className="range-row"><span>Posição do recorte LEGO</span><input aria-label="Posição horizontal do recorte LEGO" type="range" min="0" max="100" value={focus} onChange={(event) => setFocus(Number(event.target.value))} /><output>{focus}%</output></label>
 
           <div className="field-row duration-row">
-            <label><span>Duração final</span><select value={duration} onChange={(event) => setDuration(Number(event.target.value))}><option value="8">8 segundos</option><option value="15">15 segundos</option><option value="30">30 segundos</option><option value="60">1 minuto</option><option value="90">1 minuto e 30</option><option value="120">2 minutos</option><option value="300">5 minutos</option><option value="600">10 minutos</option><option value="900">15 minutos</option><option value="1800">30 minutos</option></select></label>
+            <label><span>Versão para descarregar</span><select value={duration} onChange={(event) => setDuration(Number(event.target.value))}><option value="8">8 segundos</option><option value="15">15 segundos</option><option value="30">30 segundos · principal</option><option value="45">45 segundos</option><option value="60">1 minuto</option><option value="90">1 minuto e 30</option><option value="120">2 minutos · apenas Studio</option><option value="300">5 minutos · apenas Studio</option><option value="600">10 minutos · apenas Studio</option></select></label>
           </div>
           <div className="vod-range"><label><span>Início do vídeo (opcional)</span><input value={startAt} onChange={(event) => setStartAt(event.target.value)} placeholder="usar 1.º marcador ou 00:00:00" /></label><label><span>Fim do vídeo (opcional)</span><input value={endAt} onChange={(event) => setEndAt(event.target.value)} placeholder="usar último marcador ou até ao fim" /></label></div>
           <div className="photo-heading"><b>Marcadores visuais</b><span>O horário nunca aparece no vídeo</span></div>
-          <p className="photo-help">São apenas referências: a primeira imagem da live define o início e a última define o fim quando os campos acima estão vazios. Não formam um slideshow nem são acrescentadas ao timelapse.</p>
+          <p className="photo-help">A primeira imagem da live define o início e a última imagem da live define o fim quando os campos acima estão vazios. Se carregares a 3.ª imagem, ela também aparece centrada no final, com fade-in e fundo desfocado.</p>
           <div className="photo-slots">
             {photoSlots.map((slot, index) => <div className={slot.file ? "photo-slot filled" : "photo-slot"} key={index} tabIndex={0} onPaste={(event) => pastePhoto(index, event)}>
               <span className="photo-number">0{index + 1}</span>
@@ -573,20 +686,21 @@ export function TimelapseStudio() {
           <video ref={videoRef} src={sourceUrl || undefined} muted playsInline preload="metadata" onLoadedData={refreshPreview} />
           <div className="status" aria-live="polite"><span>{status}</span>{busy && <b>Falta {100 - progress}%</b>}</div>
           {busy && <div className="progress"><i style={{ width: `${progress}%` }} /></div>}
-          <button className="generate" type="button" disabled={busy} onClick={localMode && vodConnected && !sourceUrl ? generateFromTwitch : generate}>{busy ? "A gerar os MP4 1080p60…" : localMode && vodConnected && !sourceUrl ? "Gerar os 2 MP4 da VOD" : sourceUrl ? "Gerar os 2 MP4 da gravação" : "Escolhe uma VOD ou gravação"}<span>→</span></button>
+          <button className="generate" type="button" disabled={busy} onClick={localMode && (vodConnected || reusableJob) && !sourceUrl ? generateFromTwitch : generate}>{busy ? "A gerar o pacote 1080p60…" : localMode && (vodConnected || reusableJob) && !sourceUrl ? duration > 90 ? `Gerar pacote público + ${duration / 60} min local` : "Gerar 6 durações nos 2 formatos" : sourceUrl ? "Gerar a duração escolhida da gravação" : "Escolhe uma VOD ou gravação"}<span>→</span></button>
           <div className="download-grid">
-            {downloads.horizontal && <a className="download" href={downloads.horizontal} download={`xcatarina-${category}-horizontal-1080p60-timelapse.mp4`}>Descarregar 16:9 MP4</a>}
-            {downloads.vertical && <a className="download" href={downloads.vertical} download={`xcatarina-${category}-vertical-1080p60-timelapse.mp4`}>Descarregar 9:16 MP4</a>}
+            {(variantDownloads[String(duration)]?.horizontal || downloads.horizontal) && <a className="download" href={variantDownloads[String(duration)]?.horizontal || downloads.horizontal} download={`xcatarina-${category}-${duration}s-horizontal-1080p60-timelapse.mp4`}>Descarregar {duration}s · 16:9</a>}
+            {(variantDownloads[String(duration)]?.vertical || downloads.vertical) && <a className="download" href={variantDownloads[String(duration)]?.vertical || downloads.vertical} download={`xcatarina-${category}-${duration}s-vertical-1080p60-timelapse.mp4`}>Descarregar {duration}s · 9:16</a>}
           </div>
           {(downloads.horizontal || downloads.vertical) && <div className="publish-box">
             <span>PUBLICAR NO SITE PÚBLICO</span>
             <input aria-label="Título público" placeholder="Título do vídeo" value={publishTitle} onChange={(event) => setPublishTitle(event.target.value)} />
             <textarea aria-label="Descrição pública" placeholder="Descrição curta (opcional)" rows={2} value={publishDescription} onChange={(event) => setPublishDescription(event.target.value)} />
             <div className="publish-actions">
-              <button className="publish-both" type="button" disabled={Boolean(publishing)} onClick={publishBoth}>{publishing === "both" ? `A publicar · ${publishProgress}%` : "Publicar os 2 formatos juntos"}</button>
+              <button className="publish-both" type="button" disabled={Boolean(publishing)} onClick={publishBoth}>{publishing === "both" ? `A publicar · ${publishProgress}%` : "Publicar as 6 durações nos 2 formatos"}</button>
             </div>
             <output>{publishStatus}</output>
           </div>}
+          <button className="clear-studio" type="button" disabled={busy || Boolean(publishing)} onClick={clearStudio}>Limpar imagens, horários e VOD</button>
         </aside>
       </section>
 

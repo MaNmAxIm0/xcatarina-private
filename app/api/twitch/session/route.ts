@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 
 function cors(response: NextResponse) {
   response.headers.set("Access-Control-Allow-Origin", "*");
-  response.headers.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  response.headers.set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
   response.headers.set("Access-Control-Allow-Headers", "Content-Type");
   response.headers.set("Cache-Control", "no-store");
   return response;
@@ -51,4 +51,10 @@ export function GET() {
     vodId: fresh ? session?.vodId : "",
     capturedAt: fresh ? session?.capturedAt : null,
   }));
+}
+
+export function DELETE() {
+  if (process.env.VERCEL) return cors(NextResponse.json({ error: "Disponível apenas localmente." }, { status: 403 }));
+  setCapturedTwitchSession(null);
+  return cors(NextResponse.json({ ok: true }));
 }
