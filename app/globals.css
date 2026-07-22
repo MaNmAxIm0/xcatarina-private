@@ -10,8 +10,7 @@ button,a,label { -webkit-tap-highlight-color:transparent; }
 .topbar { height:78px; max-width:1320px; padding:0 28px; margin:auto; display:flex; align-items:center; justify-content:space-between; border-bottom:1px solid #ded6d9; }
 .brand { display:flex; align-items:center; gap:12px; color:var(--ink); text-decoration:none; font-weight:800; letter-spacing:-.03em; }
 .brand-dot { width:42px; height:42px; display:grid; place-items:center; border-radius:50%; background:var(--pink); font-family:var(--font-display); font-size:18px; transform:rotate(-5deg); box-shadow:5px 4px 0 var(--yellow); }
-.private-pill { display:flex; align-items:center; gap:8px; padding:8px 13px; border:1px solid #d6ced3; border-radius:999px; color:var(--muted); font-size:12px; font-weight:700; }
-.private-pill i { width:7px; height:7px; border-radius:50%; background:#52ad77; box-shadow:0 0 0 3px #dff2e6; }
+.private-pill { display:flex; align-items:center; padding:8px 13px; border:1px solid #d6ced3; border-radius:999px; color:var(--muted); font-size:12px; font-weight:700; }
 .hero { max-width:1264px; margin:0 auto; padding:70px 0 54px; display:grid; grid-template-columns:1.35fr .65fr; align-items:end; gap:60px; }
 .eyebrow { display:inline-block; padding:7px 11px; background:var(--yellow); border:1px solid var(--ink); border-radius:4px; font-size:11px; font-weight:900; letter-spacing:.16em; transform:rotate(-1deg); }
 h1 { margin:20px 0 0; font-family:var(--font-display),serif; font-size:clamp(58px,7vw,104px); line-height:.85; font-weight:650; letter-spacing:-.065em; }

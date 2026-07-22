@@ -370,7 +370,7 @@ export function TimelapseStudio() {
           <span className="brand-dot">xC</span>
           <span>timelapse studio</span>
         </a>
-        <span className="private-pill"><i /> Estúdio privado</span>
+        <span className="private-pill">Estúdio privado</span>
       </header>
 
       <section className="hero" id="top">
