@@ -5,6 +5,7 @@ import { upload } from "@vercel/blob/client";
 
 type Format = "horizontal" | "vertical";
 type PhotoSlot = { file: File | null; time: string; isLive: boolean; previewUrl: string };
+type LocalJob = { id: string; state: "queued" | "probing" | "processing" | "complete" | "error"; progress: number; currentFormat?: Format; error?: string; outputs?: Partial<Record<Format, string>> };
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -34,6 +35,12 @@ export function TimelapseStudio() {
   const [sourceUrl, setSourceUrl] = useState("");
   const [twitchUrl, setTwitchUrl] = useState("");
   const [twitchEmbed, setTwitchEmbed] = useState("");
+  const [localMode, setLocalMode] = useState(false);
+  const [vodConnected, setVodConnected] = useState(false);
+  const [connectedVodId, setConnectedVodId] = useState("");
+  const [jobId, setJobId] = useState("");
+  const [startAt, setStartAt] = useState("00:00:00");
+  const [endAt, setEndAt] = useState("");
   const [format, setFormat] = useState<Format>("horizontal");
   const [category, setCategory] = useState<"arte" | "lego">("lego");
   const [focus, setFocus] = useState(77);
@@ -54,6 +61,52 @@ export function TimelapseStudio() {
   const [publishProgress, setPublishProgress] = useState(0);
   const [publishing, setPublishing] = useState<Format | null>(null);
   const [publishStatus, setPublishStatus] = useState("");
+
+  useEffect(() => {
+    const local = ["localhost", "127.0.0.1"].includes(window.location.hostname);
+    const modeTimer = window.setTimeout(() => setLocalMode(local), 0);
+    if (!local) return () => window.clearTimeout(modeTimer);
+    const check = async () => {
+      try {
+        const result = await fetch("/api/twitch/session", { cache: "no-store" }).then((response) => response.json()) as { available?: boolean; vodId?: string };
+        setVodConnected(Boolean(result.available));
+        setConnectedVodId(result.vodId || "");
+      } catch { setVodConnected(false); }
+    };
+    void check();
+    const timer = window.setInterval(check, 2000);
+    return () => { window.clearTimeout(modeTimer); window.clearInterval(timer); };
+  }, []);
+
+  useEffect(() => {
+    if (!jobId) return;
+    let stopped = false;
+    const check = async () => {
+      try {
+        const job = await fetch(`/api/twitch/jobs?id=${encodeURIComponent(jobId)}`, { cache: "no-store" }).then((response) => response.json()) as LocalJob;
+        if (stopped) return;
+        setProgress(job.progress || 0);
+        if (job.state === "probing") setStatus("A verificar a duração e o acesso à VOD…");
+        if (job.state === "processing") setStatus(job.currentFormat ? `A criar a versão ${job.currentFormat === "vertical" ? "vertical 9:16" : "horizontal 16:9"}…` : "A criar simultaneamente os formatos 16:9 e 9:16…");
+        if (job.state === "complete") {
+          setDownloads(job.outputs || {});
+          setStatus("As duas versões MP4 estão prontas para descarregar e publicar.");
+          setBusy(false);
+          setJobId("");
+        }
+        if (job.state === "error") {
+          setStatus(job.error || "Não foi possível processar a VOD.");
+          setBusy(false);
+          setJobId("");
+        }
+      } catch {
+        if (!stopped) setStatus("Não foi possível consultar o processamento local.");
+      }
+    };
+    void check();
+    const timer = window.setInterval(check, 2000);
+    return () => { stopped = true; window.clearInterval(timer); };
+  }, [jobId]);
 
   useEffect(() => () => {
     if (sourceUrl.startsWith("blob:")) URL.revokeObjectURL(sourceUrl);
@@ -125,9 +178,38 @@ export function TimelapseStudio() {
       }
       if (!embed) throw new Error();
       setTwitchEmbed(embed);
-      setStatus("Ligação Twitch reconhecida. Podes confirmar a live aqui; para exportar, usa a gravação se a Twitch bloquear a importação direta.");
+      if (localMode && (parts[0] === "videos" || parts[1] === "v")) {
+        window.open(url.toString(), "_blank", "noopener,noreferrer");
+        setStatus("A VOD abriu na Twitch. Inicia sessão e carrega no Play; o helper liga-a automaticamente ao Studio.");
+      } else {
+        setStatus("Ligação Twitch reconhecida. Podes confirmar a live na pré-visualização.");
+      }
     } catch {
       setStatus("Esse link não parece ser um vídeo, clipe ou canal Twitch válido.");
+    }
+  };
+
+  const generateFromTwitch = async () => {
+    if (!vodConnected) {
+      setStatus("Instala o helper, abre a VOD na Twitch, inicia sessão e carrega no Play.");
+      return;
+    }
+    setBusy(true);
+    setProgress(0);
+    setDownloads({});
+    setStatus("A iniciar o processamento local da VOD…");
+    try {
+      const response = await fetch("/api/twitch/jobs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ duration, focus, start: startAt, end: endAt }),
+      });
+      const result = await response.json() as { id?: string; error?: string };
+      if (!response.ok || !result.id) throw new Error(result.error || "Não foi possível iniciar o processamento.");
+      setJobId(result.id);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Não foi possível iniciar o processamento.");
+      setBusy(false);
     }
   };
 
@@ -266,7 +348,8 @@ export function TimelapseStudio() {
     try {
       const body = await fetch(generatedUrl).then((response) => response.blob());
       const safeTitle = publishTitle.trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9-]+/g, "-").replace(/^-|-$/g, "").slice(0, 70) || "timelapse";
-      const pathname = `videos/${category}/${Date.now()}-${outputFormat}-${safeTitle}.webm`;
+      const extension = body.type === "video/mp4" ? "mp4" : "webm";
+      const pathname = `videos/${category}/${Date.now()}-${outputFormat}-${safeTitle}.${extension}`;
       await upload(pathname, body, {
         access: "public",
         handleUploadUrl: "/api/upload",
@@ -305,6 +388,10 @@ export function TimelapseStudio() {
           <input aria-label="Link da Twitch" value={twitchUrl} onChange={(event) => setTwitchUrl(event.target.value)} placeholder="https://twitch.tv/xcatarina/v/…" />
             <button type="button" className="dark-button" onClick={tryTwitch}>Tentar importar</button>
           </div>
+          {localMode && <div className={vodConnected ? "vod-helper connected" : "vod-helper"}>
+            <div><b>{vodConnected ? `VOD ${connectedVodId || "Twitch"} ligada` : "Importação direta de VOD"}</b><small>{vodConnected ? "A autorização da tua sessão foi recebida neste computador." : "Instala uma vez o helper Tampermonkey; depois abre a VOD, inicia sessão e carrega no Play."}</small></div>
+            <a href="/xcatarina-twitch-helper.user.js" target="_blank" rel="noreferrer">Instalar helper</a>
+          </div>}
           <div className="or"><span />ou<span /></div>
           <label className="dropzone">
             <input type="file" accept="video/*" onChange={chooseVideo} />
@@ -330,8 +417,9 @@ export function TimelapseStudio() {
           {format === "vertical" && <label className="range-row"><span>Centro do LEGO</span><input aria-label="Posição horizontal do LEGO" type="range" min="50" max="100" value={focus} onChange={(event) => setFocus(Number(event.target.value))} /><output>{focus}%</output></label>}
 
           <div className="field-row duration-row">
-            <label><span>Duração final</span><select value={duration} onChange={(event) => setDuration(Number(event.target.value))}><option value="8">8 segundos</option><option value="15">15 segundos</option><option value="30">30 segundos</option><option value="60">1 minuto</option><option value="90">1 minuto e 30</option><option value="120">2 minutos</option></select></label>
+            <label><span>Duração final</span><select value={duration} onChange={(event) => setDuration(Number(event.target.value))}><option value="8">8 segundos</option><option value="15">15 segundos</option><option value="30">30 segundos</option><option value="60">1 minuto</option><option value="90">1 minuto e 30</option><option value="120">2 minutos</option><option value="300">5 minutos</option><option value="600">10 minutos</option><option value="900">15 minutos</option><option value="1800">30 minutos</option></select></label>
           </div>
+          {localMode && <div className="vod-range"><label><span>Início da VOD</span><input value={startAt} onChange={(event) => setStartAt(event.target.value)} placeholder="00:00:00" /></label><label><span>Fim (opcional)</span><input value={endAt} onChange={(event) => setEndAt(event.target.value)} placeholder="até ao fim" /></label></div>}
           <div className="photo-heading"><b>Imagens e horários</b><span>A 3.ª imagem é opcional</span></div>
           <div className="photo-slots">
             {photoSlots.map((slot, index) => <div className={slot.file ? "photo-slot filled" : "photo-slot"} key={index} tabIndex={0} onPaste={(event) => pastePhoto(index, event)}>
@@ -356,7 +444,7 @@ export function TimelapseStudio() {
           <video ref={videoRef} src={sourceUrl || undefined} muted playsInline preload="metadata" onLoadedData={refreshPreview} />
           <div className="status" aria-live="polite"><span>{status}</span>{busy && <b>Falta {100 - progress}%</b>}</div>
           {busy && <div className="progress"><i style={{ width: `${progress}%` }} /></div>}
-          <button className="generate" type="button" disabled={busy} onClick={generate}>{busy ? "A gerar…" : "Gerar os 2 timelapses"}<span>→</span></button>
+          <button className="generate" type="button" disabled={busy} onClick={localMode && vodConnected && !sourceUrl && photos.length === 0 ? generateFromTwitch : generate}>{busy ? "A gerar…" : localMode && vodConnected && !sourceUrl && photos.length === 0 ? "Gerar os 2 timelapses da VOD" : "Gerar os 2 timelapses"}<span>→</span></button>
           <div className="download-grid">
             {downloads.horizontal && <a className="download" href={downloads.horizontal} download={`xcatarina-${category}-horizontal-timelapse.webm`}>Descarregar 16:9</a>}
             {downloads.vertical && <a className="download" href={downloads.vertical} download={`xcatarina-${category}-vertical-timelapse.webm`}>Descarregar 9:16</a>}

@@ -23,10 +23,10 @@ export async function POST(request: Request) {
       request,
       onBeforeGenerateToken: async (pathname, clientPayload) => {
         if (!authorizeIp(request)) throw new Error("Este IP não tem permissão para publicar.");
-        if (!/^videos\/(arte|lego)\/[a-zA-Z0-9-]+\.webm$/.test(pathname)) throw new Error("Nome de vídeo inválido.");
+        if (!/^videos\/(arte|lego)\/[a-zA-Z0-9-]+\.(webm|mp4)$/.test(pathname)) throw new Error("Nome de vídeo inválido.");
         const metadata = JSON.parse(clientPayload || "{}") as VideoMetadata;
         if (!metadata.title || !["arte", "lego"].includes(metadata.category)) throw new Error("Metadados inválidos.");
-        return { allowedContentTypes: ["video/webm"], addRandomSuffix: true, tokenPayload: JSON.stringify(metadata) };
+        return { allowedContentTypes: ["video/webm", "video/mp4"], addRandomSuffix: true, tokenPayload: JSON.stringify(metadata) };
       },
       onUploadCompleted: async ({ blob, tokenPayload }) => {
         const metadata = JSON.parse(tokenPayload || "{}") as VideoMetadata;
