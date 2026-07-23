@@ -52,7 +52,7 @@ function run(binary: string, args: string[], onLine?: (line: string) => void) {
       output.split(/\r?\n/).forEach((line) => onLine?.(line));
     });
     child.on("error", reject);
-    child.on("close", (code) => code === 0 ? resolve({ stdout }) : reject(new Error(stderr || `O processo terminou com o cÃ³digo ${code}.`)));
+    child.on("close", (code) => code === 0 ? resolve({ stdout }) : reject(new Error(stderr || `O processo terminou com o código ${code}.`)));
   });
 }
 
@@ -113,7 +113,7 @@ async function renderOutputs(job: Job, baseInput: string, watermark: string, tar
   ]);
 }
 
-async function processJob(job: Job, manifestUrl: string, targetDuration: number, focus: number, startAt: number, endAt: number, reuseJobId?: string, outroImage?: string) {
+async function processJob(job: Job, manifestUrl: string, targetDuration: number, focus: number, startAt: number, endAt: number, reuseJobId?: string, outroImage?: string, secondaryManifestUrl?: string) {
   try {
     job.state = "probing";
     job.progress = 1;
@@ -136,10 +136,10 @@ async function processJob(job: Job, manifestUrl: string, targetDuration: number,
       const baseDuration = sourceJob.baseDuration || sourceJob.duration || 0;
       const sourceBase = path.join(outputDir, `${baseJobId}-horizontal-base.mp4`);
       if (sourceJob.state !== "complete" || !baseDuration || targetDuration > baseDuration) {
-        throw new Error("SÃ³ Ã© possÃ­vel reutilizar um timelapse concluÃ­do para uma duraÃ§Ã£o igual ou menor.");
+        throw new Error("Só é possível reutilizar um timelapse concluído para uma duração igual ou menor.");
       }
       if ((sourceJob.startAt || 0) !== startAt || (sourceJob.endAt || 0) !== endAt) {
-        throw new Error("Para mudar o inÃ­cio ou o fim Ã© necessÃ¡rio voltar a processar a VOD.");
+        throw new Error("Para mudar o início ou o fim é necessário voltar a processar a VOD.");
       }
       const speed = baseDuration / targetDuration;
       job.baseJobId = baseJobId;
@@ -152,13 +152,20 @@ async function processJob(job: Job, manifestUrl: string, targetDuration: number,
         args = ["-hide_banner", "-loglevel", "error", "-stats", "-i", sourceBase, "-vf", `setpts=(PTS-STARTPTS)/${speed},fps=60:round=near,format=yuv420p`, "-an", "-t", String(targetDuration), "-c:v", "libx264", "-preset", "fast", "-crf", "16", "-r", "60", "-movflags", "+faststart", "-y", baseOutput];
       }
     } else {
-      const { duration: fullDuration, segments } = await resolveVodPlaylist(manifestUrl);
+      const firstPlaylist = await resolveVodPlaylist(manifestUrl);
+      let fullDuration = firstPlaylist.duration;
+      let segments = firstPlaylist.segments;
+      if (secondaryManifestUrl) {
+        const secondPlaylist = await resolveVodPlaylist(secondaryManifestUrl);
+        segments = segments.concat(secondPlaylist.segments.map((segment) => ({ ...segment, start: segment.start + fullDuration })));
+        fullDuration += secondPlaylist.duration;
+      }
       const clipStart = Math.min(Math.max(0, startAt), Math.max(0, fullDuration - 1));
       const clipEnd = endAt > clipStart ? Math.min(endAt, fullDuration) : fullDuration;
       const clip = buildClipPlaylist(segments, clipStart, clipEnd);
       job.segmentCount = clip.selectedCount;
       await save(job);
-      if (clip.clipDuration < targetDuration) throw new Error("A duraÃ§Ã£o final tem de ser igual ou inferior ao intervalo escolhido.");
+      if (clip.clipDuration < targetDuration) throw new Error("A duração final tem de ser igual ou inferior ao intervalo escolhido.");
       const speed = clip.clipDuration / targetDuration;
       job.baseJobId = job.id;
       job.baseDuration = targetDuration;
@@ -208,7 +215,7 @@ async function processJob(job: Job, manifestUrl: string, targetDuration: number,
     await save(job);
   } catch (error) {
     job.state = "error";
-    job.error = error instanceof Error ? error.message : "NÃ£o foi possÃ­vel processar a VOD.";
+    job.error = error instanceof Error ? error.message : "Não foi possível processar a VOD.";
     await save(job);
   } finally {
     await Promise.all([
@@ -220,7 +227,7 @@ async function processJob(job: Job, manifestUrl: string, targetDuration: number,
 }
 
 export async function POST(request: Request) {
-  if (process.env.VERCEL) return NextResponse.json({ error: "A importaÃ§Ã£o de VOD sÃ³ estÃ¡ disponÃ­vel no estÃºdio local." }, { status: 403 });
+  if (process.env.VERCEL) return NextResponse.json({ error: "A importação de VOD só está disponível no estúdio local." }, { status: 403 });
   let body: { duration?: number; focus?: number; start?: string; end?: string; reuseJobId?: string } = {};
   let outroFile: File | null = null;
   if ((request.headers.get("content-type") || "").includes("multipart/form-data")) {
@@ -244,34 +251,34 @@ export async function POST(request: Request) {
   await save(job);
   let outroImage: string | undefined;
   if (outroFile) {
-    if (outroFile.size > 20 * 1024 * 1024 || !outroFile.type.startsWith("image/")) return NextResponse.json({ error: "A terceira imagem tem de ser uma imagem atÃ© 20 MB." }, { status: 400 });
+    if (outroFile.size > 20 * 1024 * 1024 || !outroFile.type.startsWith("image/")) return NextResponse.json({ error: "A terceira imagem tem de ser uma imagem até 20 MB." }, { status: 400 });
     outroImage = path.join(workDir, `${job.id}-outro.png`);
     await sharp(Buffer.from(await outroFile.arrayBuffer())).rotate().png().toFile(outroImage);
   }
-  void processJob(job, session?.manifestUrl || "", targetDuration, focus, startAt, endAt, reuseJobId, outroImage);
+  void processJob(job, session?.manifestUrl || "", targetDuration, focus, startAt, endAt, reuseJobId, outroImage, session?.secondaryManifestUrl || "");
   return NextResponse.json({ id: job.id });
 }
 
 export async function GET(request: Request) {
   const id = new URL(request.url).searchParams.get("id") || "";
-  if (!/^[a-f0-9-]{36}$/.test(id)) return NextResponse.json({ error: "Tarefa invÃ¡lida." }, { status: 400 });
+  if (!/^[a-f0-9-]{36}$/.test(id)) return NextResponse.json({ error: "Tarefa inválida." }, { status: 400 });
   try {
     const job = JSON.parse(await readFile(path.join(workDir, `${id}.json`), "utf8")) as Job;
     return NextResponse.json(job, { headers: { "Cache-Control": "no-store" } });
   } catch {
-    return NextResponse.json({ error: "Tarefa nÃ£o encontrada." }, { status: 404 });
+    return NextResponse.json({ error: "Tarefa não encontrada." }, { status: 404 });
   }
 }
 
 export async function DELETE(request: Request) {
-  if (process.env.VERCEL) return NextResponse.json({ error: "DisponÃ­vel apenas localmente." }, { status: 403 });
+  if (process.env.VERCEL) return NextResponse.json({ error: "Disponível apenas localmente." }, { status: 403 });
   const body = await request.json().catch(() => ({})) as { ids?: string[]; all?: boolean };
   const ids = new Set((body.ids || []).filter((id) => /^[a-f0-9-]{36}$/.test(id)));
   for (const id of [...ids]) {
     try {
       const job = JSON.parse(await readFile(path.join(workDir, `${id}.json`), "utf8")) as Job;
       if (job.baseJobId && /^[a-f0-9-]{36}$/.test(job.baseJobId)) ids.add(job.baseJobId);
-    } catch { /* O registo pode jÃ¡ ter sido removido. */ }
+    } catch { /* O registo pode já ter sido removido. */ }
   }
   const removeMatches = async (directory: string) => {
     const names = await readdir(directory).catch(() => [] as string[]);
@@ -282,5 +289,8 @@ export async function DELETE(request: Request) {
   const removed = (await removeMatches(workDir)) + (await removeMatches(outputDir));
   return NextResponse.json({ ok: true, removed });
 }
+
+
+
 
 

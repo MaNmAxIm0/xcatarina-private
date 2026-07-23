@@ -29,7 +29,7 @@ function waitFor(video: HTMLVideoElement, event: "loadedmetadata" | "seeked") {
     };
     const failed = () => {
       cleanup();
-      reject(new Error("NÃ£o foi possÃ­vel ler este vÃ­deo."));
+      reject(new Error("Não foi possível ler este vídeo."));
     };
     const cleanup = () => {
       video.removeEventListener(event, done);
@@ -51,6 +51,8 @@ export function TimelapseStudio() {
   const [localMode, setLocalMode] = useState(false);
   const [vodConnected, setVodConnected] = useState(false);
   const [connectedVodId, setConnectedVodId] = useState("");
+  const [secondaryVodId, setSecondaryVodId] = useState("");
+  const [combineLives, setCombineLives] = useState(false);
   const [jobId, setJobId] = useState("");
   const [reusableJob, setReusableJob] = useState<ReusableJob | null>(null);
   const localBaseRef = useRef<LocalBase | null>(null);
@@ -67,7 +69,7 @@ export function TimelapseStudio() {
   const selectedSlots = photoSlots.filter((slot): slot is PhotoSlot & { file: File } => Boolean(slot.file));
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(0);
-  const [status, setStatus] = useState("Escolhe uma gravaÃ§Ã£o para comeÃ§ar.");
+  const [status, setStatus] = useState("Escolhe uma gravação para começar.");
   const [downloads, setDownloads] = useState<Partial<Record<Format, string>>>({});
   const [generatedPreview, setGeneratedPreview] = useState("");
   const [variantDownloads, setVariantDownloads] = useState<VariantDownloads>({});
@@ -80,12 +82,17 @@ export function TimelapseStudio() {
   const [publishing, setPublishing] = useState<"both" | null>(null);
   const [publishStatus, setPublishStatus] = useState("");
 
+  const enableCombineLives = async () => {
+    const response = await fetch("/api/twitch/session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ combine: true }) });
+    if (response.ok) { setCombineLives(true); setPublishStatus(""); }
+  };
+
   const updatePublishedDate = async () => {
-    if (!publicationId || !publishDate) { setPublishStatus("Indica uma data e publica primeiro este vÃ­deo."); return; }
-    setPublishStatus("A atualizar a data da publicaÃ§Ã£oâ€¦");
-    const response = await fetch("/api/publish", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ publicationId, publishedAt: publishDate }) });
+    if (!publicationId || !publishDate) { setPublishStatus("Indica uma data e publica primeiro este vídeo."); return; }
+    setPublishStatus("A atualizar a data da publicação…");
+    const response = await fetch("/api/publish", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ publicationId, publishedAt: publishDate, title: publishTitle }) });
     const result = await response.json().catch(() => ({})) as { error?: string };
-    setPublishStatus(response.ok ? "Data da publicaÃ§Ã£o atualizada." : (result.error || "NÃ£o foi possÃ­vel atualizar a data."));
+    setPublishStatus(response.ok ? "Data da publicação atualizada." : (result.error || "Não foi possível atualizar a data."));
   };
 
   useEffect(() => {
@@ -96,9 +103,11 @@ export function TimelapseStudio() {
     if (!local) return () => window.clearTimeout(modeTimer);
     const check = async () => {
       try {
-      const result = await fetch("/api/twitch/session", { cache: "no-store" }).then((response) => response.json()) as { available?: boolean; vodId?: string; vodStartedAt?: string | null; vodDurationSeconds?: number | null };
+      const result = await fetch("/api/twitch/session", { cache: "no-store" }).then((response) => response.json()) as { available?: boolean; vodId?: string; secondaryVodId?: string; combineLives?: boolean; vodStartedAt?: string | null; vodDurationSeconds?: number | null };
       setVodConnected(Boolean(result.available));
       setConnectedVodId(result.vodId || "");
+      setSecondaryVodId(result.secondaryVodId || "");
+      setCombineLives(Boolean(result.combineLives));
       if (result.vodStartedAt && result.vodDurationSeconds) {
         const end = new Date(Date.parse(result.vodStartedAt) + result.vodDurationSeconds * 1000);
         if (!Number.isNaN(end.getTime()) && !publishDateRef.current) {
@@ -121,7 +130,7 @@ export function TimelapseStudio() {
       if (activeJob) {
         setJobId(activeJob);
         setBusy(true);
-        setStatus("A recuperar o processamento que ficou ativoâ€¦");
+        setStatus("A recuperar o processamento que ficou ativo…");
       }
       if (savedReusable) {
         try {
@@ -142,8 +151,8 @@ export function TimelapseStudio() {
         const job = await fetch(`/api/twitch/jobs?id=${encodeURIComponent(jobId)}`, { cache: "no-store" }).then((response) => response.json()) as LocalJob;
         if (stopped) return;
         setProgress(job.progress || 0);
-        if (job.state === "probing") setStatus("A verificar a duraÃ§Ã£o e o acesso Ã  VODâ€¦");
-        if (job.state === "processing") setStatus(job.currentFormat ? `A criar a versÃ£o ${job.currentFormat === "vertical" ? "vertical 9:16" : "horizontal 16:9"}â€¦` : `A acelerar o intervalo completo em 1080p60${job.segmentCount ? ` (${job.segmentCount} segmentos contÃ­nuos)` : ""}â€¦`);
+        if (job.state === "probing") setStatus("A verificar a duração e o acesso à VOD…");
+        if (job.state === "processing") setStatus(job.currentFormat ? `A criar a versão ${job.currentFormat === "vertical" ? "vertical 9:16" : "horizontal 16:9"}…` : `A acelerar o intervalo completo em 1080p60${job.segmentCount ? ` (${job.segmentCount} segmentos contínuos)` : ""}…`);
         if (job.outputs?.horizontal) {
           setDownloads(job.outputs);
           setGeneratedPreview(job.outputs.horizontal);
@@ -162,18 +171,18 @@ export function TimelapseStudio() {
           }
           window.localStorage.removeItem("xcatarina-active-job");
           setPublicationId(crypto.randomUUID());
-          setStatus(job.duration && job.duration > 90 ? `As 6 duraÃ§Ãµes pÃºblicas e a versÃ£o local de ${job.duration / 60} minutos estÃ£o prontas.` : "As 6 duraÃ§Ãµes, em 16:9 e 9:16, estÃ£o prontas para descarregar e publicar.");
+          setStatus(job.duration && job.duration > 90 ? `As 6 durações públicas e a versão local de ${job.duration / 60} minutos estão prontas.` : "As 6 durações, em 16:9 e 9:16, estão prontas para descarregar e publicar.");
           setBusy(false);
           setJobId("");
         }
         if (job.state === "error") {
           window.localStorage.removeItem("xcatarina-active-job");
-          setStatus(job.error || "NÃ£o foi possÃ­vel processar a VOD.");
+          setStatus(job.error || "Não foi possível processar a VOD.");
           setBusy(false);
           setJobId("");
         }
       } catch {
-        if (!stopped) setStatus("NÃ£o foi possÃ­vel consultar o processamento local.");
+        if (!stopped) setStatus("Não foi possível consultar o processamento local.");
       }
     };
     void check();
@@ -323,7 +332,7 @@ export function TimelapseStudio() {
     localBaseRef.current = null;
     setDownloads({});
     setVariantDownloads({});
-    setStatus("VÃ­deo pronto. Confirma o enquadramento e gera o timelapse.");
+    setStatus("Vídeo pronto. Confirma o enquadramento e gera o timelapse.");
   };
 
   const tryTwitch = () => {
@@ -345,12 +354,12 @@ export function TimelapseStudio() {
       setTwitchEmbed(embed);
       if (localMode && (parts[0] === "videos" || parts[1] === "v")) {
         window.open(url.toString(), "_blank", "noopener,noreferrer");
-        setStatus("A VOD abriu na Twitch. Inicia sessÃ£o e carrega no Play; o helper liga-a automaticamente ao Studio.");
+        setStatus("A VOD abriu na Twitch. Inicia sessão e carrega no Play; o helper liga-a automaticamente ao Studio.");
       } else {
-        setStatus("LigaÃ§Ã£o Twitch reconhecida. Podes confirmar a live na prÃ©-visualizaÃ§Ã£o.");
+        setStatus("Ligação Twitch reconhecida. Podes confirmar a live na pré-visualização.");
       }
     } catch {
-      setStatus("Esse link nÃ£o parece ser um vÃ­deo, clipe ou canal Twitch vÃ¡lido.");
+      setStatus("Esse link não parece ser um vídeo, clipe ou canal Twitch válido.");
     }
   };
 
@@ -367,11 +376,11 @@ export function TimelapseStudio() {
     const startSeconds = timeToSeconds(range.start);
     const endSeconds = range.end ? timeToSeconds(range.end) : null;
     if (startSeconds === null || (range.end && endSeconds === null)) {
-      setStatus("Usa horÃ¡rios vÃ¡lidos no formato HH:MM:SS.");
+      setStatus("Usa horários válidos no formato HH:MM:SS.");
       return;
     }
     if (endSeconds !== null && endSeconds <= startSeconds) {
-      setStatus("O fim do intervalo deve ser posterior ao inÃ­cio.");
+      setStatus("O fim do intervalo deve ser posterior ao início.");
       return;
     }
     const canReuse = reusableJob
@@ -379,7 +388,7 @@ export function TimelapseStudio() {
       && reusableJob.endAt === (endSeconds || 0)
       && Math.max(90, duration) <= reusableJob.duration;
     if (!vodConnected && !canReuse) {
-      setStatus("Instala o helper, abre a VOD na Twitch, inicia sessÃ£o e carrega no Play.");
+      setStatus("Instala o helper, abre a VOD na Twitch, inicia sessão e carrega no Play.");
       return;
     }
     setBusy(true);
@@ -387,7 +396,7 @@ export function TimelapseStudio() {
     setDownloads({});
     setVariantDownloads({});
     setPublicationId("");
-    setStatus(`A iniciar o vÃ­deo acelerado entre ${range.start}${range.end ? ` e ${range.end}` : " e o fim da VOD"}â€¦`);
+    setStatus(`A iniciar o vídeo acelerado entre ${range.start}${range.end ? ` e ${range.end}` : " e o fim da VOD"}…`);
     try {
       const requestBody = new FormData();
       requestBody.set("duration", String(duration));
@@ -401,11 +410,11 @@ export function TimelapseStudio() {
         body: requestBody,
       });
       const result = await response.json() as { id?: string; error?: string };
-      if (!response.ok || !result.id) throw new Error(result.error || "NÃ£o foi possÃ­vel iniciar o processamento.");
+      if (!response.ok || !result.id) throw new Error(result.error || "Não foi possível iniciar o processamento.");
       setJobId(result.id);
       window.localStorage.setItem("xcatarina-active-job", result.id);
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "NÃ£o foi possÃ­vel iniciar o processamento.");
+      setStatus(error instanceof Error ? error.message : "Não foi possível iniciar o processamento.");
       setBusy(false);
     }
   };
@@ -433,8 +442,8 @@ export function TimelapseStudio() {
 
   const ensureMp4 = async (recorded: Blob) => {
     if (!localMode && recorded.type.startsWith("video/mp4")) return recorded;
-    if (!localMode) throw new Error("Abre o estÃºdio em localhost para converter a gravaÃ§Ã£o para MP4 H.264 1080p60.");
-    setStatus("A converter a versÃ£o para MP4 H.264â€¦");
+    if (!localMode) throw new Error("Abre o estúdio em localhost para converter a gravação para MP4 H.264 1080p60.");
+    setStatus("A converter a versão para MP4 H.264…");
     const response = await fetch("/api/timelapse/convert", {
       method: "POST",
       headers: { "Content-Type": recorded.type || "video/webm" },
@@ -442,7 +451,7 @@ export function TimelapseStudio() {
     });
     if (!response.ok) {
       const result = await response.json().catch(() => ({})) as { error?: string };
-      throw new Error(result.error || "NÃ£o foi possÃ­vel converter a gravaÃ§Ã£o para MP4. Abre o estÃºdio em localhost e tenta novamente.");
+      throw new Error(result.error || "Não foi possível converter a gravação para MP4. Abre o estúdio em localhost e tenta novamente.");
     }
     return response.blob();
   };
@@ -451,11 +460,11 @@ export function TimelapseStudio() {
     const video = videoRef.current;
     const canvas = canvasRef.current;
     if (!canvas || !sourceUrl) {
-      setStatus("As imagens sÃ£o marcadores de referÃªncia. Escolhe uma VOD ou gravaÃ§Ã£o para criar um timelapse real.");
+      setStatus("As imagens são marcadores de referência. Escolhe uma VOD ou gravação para criar um timelapse real.");
       return;
     }
     if (!video) {
-      setStatus("A gravaÃ§Ã£o ainda nÃ£o estÃ¡ pronta. Aguarda o carregamento e tenta novamente.");
+      setStatus("A gravação ainda não está pronta. Aguarda o carregamento e tenta novamente.");
       return;
     }
     setBusy(true);
@@ -463,20 +472,20 @@ export function TimelapseStudio() {
     Object.values(downloads).forEach((url) => url && URL.revokeObjectURL(url));
     setDownloads({});
     setPublicationId("");
-    setStatus("A acelerar o vÃ­deo realâ€¦ mantÃ©m esta pÃ¡gina aberta.");
+    setStatus("A acelerar o vídeo real… mantém esta página aberta.");
     try {
       if (!video.duration || Number.isNaN(video.duration)) {
         await waitFor(video, "loadedmetadata");
       }
       const range = resolvedMarkerRange();
       if (timeToSeconds(range.start) === null || (range.end && timeToSeconds(range.end) === null)) {
-        throw new Error("Usa horÃ¡rios vÃ¡lidos no formato HH:MM:SS.");
+        throw new Error("Usa horários válidos no formato HH:MM:SS.");
       }
       const clipStart = Math.max(0, Math.min(video.duration - .04, timeToSeconds(range.start) ?? 0));
       const requestedEnd = timeToSeconds(range.end);
       const clipEnd = requestedEnd === null ? video.duration : Math.max(0, Math.min(video.duration, requestedEnd));
-      if (clipEnd <= clipStart) throw new Error("O fim do intervalo deve ser posterior ao inÃ­cio.");
-      if (clipEnd - clipStart < duration) throw new Error("A duraÃ§Ã£o final tem de ser igual ou inferior ao intervalo escolhido para haver aceleraÃ§Ã£o real.");
+      if (clipEnd <= clipStart) throw new Error("O fim do intervalo deve ser posterior ao início.");
+      if (clipEnd - clipStart < duration) throw new Error("A duração final tem de ser igual ou inferior ao intervalo escolhido para haver aceleração real.");
       const processingVideo = document.createElement("video");
       processingVideo.muted = true;
       processingVideo.preload = "auto";
@@ -487,17 +496,17 @@ export function TimelapseStudio() {
       if (photoSlots[2].previewUrl) {
         endingImage = new Image();
         endingImage.src = photoSlots[2].previewUrl;
-        await new Promise<void>((resolve, reject) => { endingImage!.onload = () => resolve(); endingImage!.onerror = () => reject(new Error("NÃ£o foi possÃ­vel ler a terceira imagem.")); });
+        await new Promise<void>((resolve, reject) => { endingImage!.onload = () => resolve(); endingImage!.onerror = () => reject(new Error("Não foi possível ler a terceira imagem.")); });
       }
       const record = async (input: HTMLVideoElement, inputStart: number, inputEnd: number, outputDuration: number, outputFormat: Format, withWatermark: boolean, progressStart: number, progressSpan: number, outro: HTMLImageElement | null = null) => {
         canvas.width = outputFormat === "vertical" ? 1080 : 1920;
         canvas.height = outputFormat === "vertical" ? 1920 : 1080;
         const ctx = canvas.getContext("2d", { alpha: false });
-        if (!ctx) throw new Error("O navegador nÃ£o disponibilizou o editor de vÃ­deo.");
+        if (!ctx) throw new Error("O navegador não disponibilizou o editor de vídeo.");
         const stream = canvas.captureStream(60);
         const mimeType = ["video/mp4;codecs=avc1.64002a", "video/mp4;codecs=avc1.42e01e", "video/mp4", "video/webm;codecs=vp9", "video/webm"]
           .find((candidate) => MediaRecorder.isTypeSupported(candidate));
-        if (!mimeType) throw new Error("Este navegador nÃ£o consegue gravar o timelapse. Usa uma versÃ£o recente do Chrome.");
+        if (!mimeType) throw new Error("Este navegador não consegue gravar o timelapse. Usa uma versão recente do Chrome.");
         const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: withWatermark ? (outputFormat === "horizontal" ? 16_000_000 : 14_000_000) : 24_000_000 });
         const chunks: BlobPart[] = [];
         recorder.ondataavailable = (event) => event.data.size && chunks.push(event.data);
@@ -546,7 +555,7 @@ export function TimelapseStudio() {
       let baseUrl = canReuse && duration === previousBase.duration ? previousBase.url : "";
       let createdBaseUrl = "";
       if (!baseUrl) {
-        setStatus(canReuse ? "A encurtar o horizontal-base jÃ¡ geradoâ€¦" : "A criar o horizontal-base 1080p60 a partir da gravaÃ§Ã£oâ€¦");
+        setStatus(canReuse ? "A encurtar o horizontal-base já gerado…" : "A criar o horizontal-base 1080p60 a partir da gravação…");
         let baseInput = processingVideo;
         let baseStart = clipStart;
         let baseEnd = clipEnd;
@@ -573,9 +582,9 @@ export function TimelapseStudio() {
       baseVideo.src = baseUrl;
       baseVideo.load();
       await waitFor(baseVideo, "loadedmetadata");
-      setStatus("A aplicar a marca de Ã¡gua ao horizontal 1080p60â€¦");
+      setStatus("A aplicar a marca de água ao horizontal 1080p60…");
       const horizontal = await record(baseVideo, 0, duration, duration, "horizontal", true, 55, 20, endingImage);
-      setStatus("A criar o vertical a partir do horizontal-baseâ€¦");
+      setStatus("A criar o vertical a partir do horizontal-base…");
       const vertical = await record(baseVideo, 0, duration, duration, "vertical", true, 75, 20, endingImage);
       const results: Partial<Record<Format, string>> = {
         horizontal: URL.createObjectURL(horizontal),
@@ -591,9 +600,9 @@ export function TimelapseStudio() {
       setVariantDownloads({ [String(duration)]: results });
       setPublicationId(crypto.randomUUID());
       setProgress(100);
-      setStatus("As duas versÃµes MP4 1080p60 estÃ£o prontas para descarregar e publicar.");
+      setStatus("As duas versões MP4 1080p60 estão prontas para descarregar e publicar.");
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "NÃ£o foi possÃ­vel gerar o timelapse.");
+      setStatus(error instanceof Error ? error.message : "Não foi possível gerar o timelapse.");
     } finally {
       setBusy(false);
       window.setTimeout(refreshPreview, 0);
@@ -601,28 +610,28 @@ export function TimelapseStudio() {
   };
 
   const publishBoth = async () => {
-    if (!publishTitle.trim()) { setPublishStatus("Escreve um tÃ­tulo antes de publicar."); return; }
-    if (!DURATION_VARIANTS.every((seconds) => variantDownloads[String(seconds)]?.horizontal && variantDownloads[String(seconds)]?.vertical)) { setPublishStatus("Gera primeiro o pacote completo das 6 duraÃ§Ãµes."); return; }
-    if (!reusableJob?.id) { setPublishStatus("NÃ£o foi encontrado o pacote local. Gera novamente a partir da VOD."); return; }
+    if (!publishTitle.trim()) { setPublishStatus("Escreve um título antes de publicar."); return; }
+    if (!DURATION_VARIANTS.every((seconds) => variantDownloads[String(seconds)]?.horizontal && variantDownloads[String(seconds)]?.vertical)) { setPublishStatus("Gera primeiro o pacote completo das 6 durações."); return; }
+    if (!reusableJob?.id) { setPublishStatus("Não foi encontrado o pacote local. Gera novamente a partir da VOD."); return; }
     const sharedPublicationId = publicationId || crypto.randomUUID();
     if (!publicationId) setPublicationId(sharedPublicationId);
     window.localStorage.setItem("xcatarina-publication-id", sharedPublicationId);
-    setPublishing("both"); setPublishProgress(0); setPublishStatus("A publicar as 12 versÃµes como um sÃ³ vÃ­deoâ€¦");
+    setPublishing("both"); setPublishProgress(0); setPublishStatus("A publicar as 12 versões como um só vídeo…");
     try {
       setPublishProgress(5);
       const response = await fetch("/api/publish", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ jobId: reusableJob.id, publicationId: sharedPublicationId, title: publishTitle, description: publishDescription, category, publishedAt: publishDate }) });
       const result = await response.json().catch(() => ({})) as { error?: string };
-      if (!response.ok) throw new Error(result.error || "NÃ£o foi possÃ­vel publicar no Cloudflare R2.");
+      if (!response.ok) throw new Error(result.error || "Não foi possível publicar no Cloudflare R2.");
       setPublishProgress(100);
-      setPublishStatus("Publicado: 30 segundos em 16:9 Ã© o principal; as outras 11 versÃµes ficam disponÃ­veis para download.");
+      setPublishStatus("Publicado: 30 segundos em 16:9 é o principal; as outras 11 versões ficam disponíveis para download.");
     } catch (error) {
-      setPublishStatus(error instanceof Error ? error.message : "NÃ£o foi possÃ­vel publicar o pacote completo.");
+      setPublishStatus(error instanceof Error ? error.message : "Não foi possível publicar o pacote completo.");
     } finally { setPublishing(null); }
   };
 
   const clearStudio = async () => {
     if (busy || publishing) return;
-    if (!window.confirm("Limpar a VOD ligada, imagens, horÃ¡rios e vÃ­deos temporÃ¡rios deste Studio? Os vÃ­deos jÃ¡ publicados nÃ£o serÃ£o apagados.")) return;
+    if (!window.confirm("Limpar a VOD ligada, imagens, horários e vídeos temporários deste Studio? Os vídeos já publicados não serão apagados.")) return;
     const ids = [jobId, reusableJob?.id || ""].filter(Boolean);
     await Promise.all([
       fetch("/api/twitch/session", { method: "DELETE" }).catch(() => undefined),
@@ -636,114 +645,120 @@ export function TimelapseStudio() {
     localBaseRef.current = null;
     window.localStorage.removeItem("xcatarina-active-job");
     window.localStorage.removeItem("xcatarina-reusable-job");
-    setJobId(""); setReusableJob(null); setVodConnected(false); setConnectedVodId("");
+    setJobId(""); setReusableJob(null); setVodConnected(false); setConnectedVodId(""); setSecondaryVodId(""); setCombineLives(false);
     setSourceUrl(""); setSourceName(""); setSourceInputKey((value) => value + 1); setTwitchUrl(""); setTwitchEmbed("");
     setStartAt(""); setEndAt(""); setDuration(30); setFocus(77);
     setPhotoSlots([0, 1, 2].map(() => ({ file: null, time: "", isLive: true, previewUrl: "" })));
     setDownloads({}); setGeneratedPreview(""); setVariantDownloads({}); setPublicationId(""); setPublishTitle(""); setPublishDescription(""); publishDateRef.current = ""; setPublishDate(""); setPublishStatus(""); setPublishProgress(0);
-    setProgress(0); setStatus("EstÃºdio limpo. Escolhe uma nova VOD ou gravaÃ§Ã£o.");
+    setProgress(0); setStatus("Estúdio limpo. Escolhe uma nova VOD ou gravação.");
   };
 
   return (
     <main className="studio-shell">
       <header className="topbar">
-        <a className="brand" href="#top" aria-label="EstÃºdio xCatarina">
+        <a className="brand" href="#top" aria-label="Estúdio xCatarina">
           <span className="brand-dot">xC</span>
           <span>timelapse studio</span>
         </a>
-        <span className="private-pill">EstÃºdio privado</span>
+        <span className="private-pill">Estúdio privado</span>
       </header>
 
       <section className="hero" id="top">
         <div>
-          <span className="eyebrow">DA LIVE Ã€ PEÃ‡A FINAL</span>
+          <span className="eyebrow">DA LIVE À PEÇA FINAL</span>
           <h1>Transforma horas<br />em <em>segundos.</em></h1>
         </div>
-        <p>Importa uma live, escolhe o enquadramento e cria um timelapse pronto para partilhar â€” sem perder o LEGO de vista.</p>
+        <p>Importa uma live, escolhe o enquadramento e cria um timelapse pronto para partilhar — sem perder o LEGO de vista.</p>
       </section>
 
       <section className="workspace">
         <div className="controls">
-          <div className="step-heading"><span>01</span><div><h2>Fonte da live</h2><p>Usa o link da Twitch ou a gravaÃ§Ã£o original.</p></div></div>
+          <div className="step-heading"><span>01</span><div><h2>Fonte da live</h2><p>Usa o link da Twitch ou a gravação original.</p></div></div>
           <div className="twitch-row">
-          <input aria-label="Link da Twitch" value={twitchUrl} onChange={(event) => setTwitchUrl(event.target.value)} placeholder="https://twitch.tv/xcatarina/v/â€¦" />
+          <input aria-label="Link da Twitch" value={twitchUrl} onChange={(event) => setTwitchUrl(event.target.value)} placeholder="https://twitch.tv/xcatarina/v/…" />
             <button type="button" className="dark-button" onClick={tryTwitch}>Tentar importar</button>
           </div>
           {localMode && <div className={vodConnected ? "vod-helper connected" : "vod-helper"}>
-            <div><b>{vodConnected ? `VOD ${connectedVodId || "Twitch"} ligada` : "ImportaÃ§Ã£o direta de VOD"}</b><small>{vodConnected ? "A autorizaÃ§Ã£o da tua sessÃ£o foi recebida neste computador." : "Instala uma vez o helper Tampermonkey; depois abre a VOD, inicia sessÃ£o e carrega no Play."}</small></div>
-            <a href="/xcatarina-twitch-helper.user.js" target="_blank" rel="noreferrer">Instalar helper</a>
+            <div><b>{vodConnected ? `VOD ${connectedVodId || "Twitch"} ligada${secondaryVodId ? ` + ${secondaryVodId}` : ""}` : "Importação direta de VOD"}</b><small>{combineLives ? (secondaryVodId ? "As duas VODs estão ligadas e serão tratadas como um único timelapse." : "Abre agora a segunda VOD na Twitch; ela será adicionada a esta geração.") : (vodConnected ? "A autorização da tua sessão foi recebida neste computador." : "Instala uma vez o helper Tampermonkey; depois abre a VOD, inicia sessão e carrega no Play.")}</small></div>
+            <div className="vod-helper-actions">{vodConnected && <button type="button" onClick={enableCombineLives}>{combineLives ? "A juntar duas VODs" : "Juntar próxima VOD"}</button>}<a href="/xcatarina-twitch-helper.user.js" target="_blank" rel="noreferrer">Instalar helper</a></div>
           </div>}
           <div className="or"><span />ou<span /></div>
           <label className="dropzone">
             <input key={sourceInputKey} type="file" accept="video/*" onChange={chooseVideo} />
-            <b>{sourceName || "Escolher gravaÃ§Ã£o"}</b>
-            <small>MP4, MOV ou WebM Â· o ficheiro fica neste dispositivo</small>
+            <b>{sourceName || "Escolher gravação"}</b>
+            <small>MP4, MOV ou WebM · o ficheiro fica neste dispositivo</small>
           </label>
 
           <div className="divider" />
-          <div className="step-heading"><span>02</span><div><h2>Enquadramento</h2><p>A VOD gera 6 duraÃ§Ãµes em 16:9 e 9:16; 30 segundos serÃ¡ a versÃ£o pÃºblica principal.</p></div></div>
+          <div className="step-heading"><span>02</span><div><h2>Enquadramento</h2><p>A VOD gera 6 durações em 16:9 e 9:16; 30 segundos será a versão pública principal.</p></div></div>
           <div className="output-pair" aria-label="Formatos gerados">
-            <span><i className="ratio wide" /><b>Live completa</b><small>1920 Ã— 1080 Â· 60 fps</small></span>
-            <span><i className="ratio tall" /><b>LEGO em foco</b><small>1080 Ã— 1920 Â· 60 fps</small></span>
+            <span><i className="ratio wide" /><b>Live completa</b><small>1920 × 1080 · 60 fps</small></span>
+            <span><i className="ratio tall" /><b>LEGO em foco</b><small>1080 × 1920 · 60 fps</small></span>
           </div>
-          <div className="content-type" role="group" aria-label="Tipo de criaÃ§Ã£o">
-            <span>ConteÃºdo</span>
+          <div className="content-type" role="group" aria-label="Tipo de criação">
+            <span>Conteúdo</span>
             <button type="button" className={category === "arte" ? "active" : ""} onClick={() => setCategory("arte")}>Pintura / Arte</button>
             <button type="button" className={category === "lego" ? "active" : ""} onClick={() => setCategory("lego")}>LEGO</button>
           </div>
-          <label className="range-row"><span>PosiÃ§Ã£o do recorte LEGO</span><input aria-label="PosiÃ§Ã£o horizontal do recorte LEGO" type="range" min="0" max="100" value={focus} onChange={(event) => setFocus(Number(event.target.value))} /><output>{focus}%</output></label>
+          <label className="range-row"><span>Posição do recorte LEGO</span><input aria-label="Posição horizontal do recorte LEGO" type="range" min="0" max="100" value={focus} onChange={(event) => setFocus(Number(event.target.value))} /><output>{focus}%</output></label>
 
           <div className="field-row duration-row">
-            <label><span>VersÃ£o para descarregar</span><select value={duration} onChange={(event) => setDuration(Number(event.target.value))}><option value="8">8 segundos</option><option value="15">15 segundos</option><option value="30">30 segundos Â· principal</option><option value="45">45 segundos</option><option value="60">1 minuto</option><option value="90">1 minuto e 30</option><option value="120">2 minutos Â· apenas Studio</option><option value="300">5 minutos Â· apenas Studio</option><option value="600">10 minutos Â· apenas Studio</option></select></label>
+            <label><span>Versão para descarregar</span><select value={duration} onChange={(event) => setDuration(Number(event.target.value))}><option value="8">8 segundos</option><option value="15">15 segundos</option><option value="30">30 segundos · principal</option><option value="45">45 segundos</option><option value="60">1 minuto</option><option value="90">1 minuto e 30</option><option value="120">2 minutos · apenas Studio</option><option value="300">5 minutos · apenas Studio</option><option value="600">10 minutos · apenas Studio</option></select></label>
           </div>
-          <div className="vod-range"><label><span>InÃ­cio do vÃ­deo (opcional)</span><input value={startAt} onChange={(event) => setStartAt(event.target.value)} placeholder="usar 1.Âº marcador ou 00:00:00" /></label><label><span>Fim do vÃ­deo (opcional)</span><input value={endAt} onChange={(event) => setEndAt(event.target.value)} placeholder="usar Ãºltimo marcador ou atÃ© ao fim" /></label></div>
-          <div className="photo-heading"><b>Marcadores visuais</b><span>O horÃ¡rio nunca aparece no vÃ­deo</span></div>
-          <p className="photo-help">A primeira imagem da live define o inÃ­cio e a Ãºltima imagem da live define o fim quando os campos acima estÃ£o vazios. Se carregares a 3.Âª imagem, ela tambÃ©m aparece centrada no final, com fade-in e fundo desfocado.</p>
+          <div className="vod-range"><label><span>Início do vídeo (opcional)</span><input value={startAt} onChange={(event) => setStartAt(event.target.value)} placeholder="usar 1.º marcador ou 00:00:00" /></label><label><span>Fim do vídeo (opcional)</span><input value={endAt} onChange={(event) => setEndAt(event.target.value)} placeholder="usar último marcador ou até ao fim" /></label></div>
+          <div className="photo-heading"><b>Marcadores visuais</b><span>O horário nunca aparece no vídeo</span></div>
+          <p className="photo-help">A primeira imagem da live define o início e a última imagem da live define o fim quando os campos acima estão vazios. Se carregares a 3.ª imagem, ela também aparece centrada no final, com fade-in e fundo desfocado.</p>
           <div className="photo-slots">
             {photoSlots.map((slot, index) => <div className={slot.file ? "photo-slot filled" : "photo-slot"} key={index} tabIndex={0} onPaste={(event) => pastePhoto(index, event)}>
               <span className="photo-number">0{index + 1}</span>
-              {slot.previewUrl ? <img className="photo-preview" src={slot.previewUrl} alt={`PrÃ©-visualizaÃ§Ã£o da imagem ${index + 1}`} /> : <div className="photo-placeholder">Imagem {index + 1}</div>}
+              {slot.previewUrl ? <img className="photo-preview" src={slot.previewUrl} alt={`Pré-visualização da imagem ${index + 1}`} /> : <div className="photo-placeholder">Imagem {index + 1}</div>}
               <b>{slot.file?.name || "Colar ou escolher imagem"}</b>
               <small>Ctrl+V nesta caixa</small>
               <label className="file-button">Escolher ficheiro<input type="file" accept="image/*" onChange={(event) => setPhoto(index, event.target.files?.[0] || null)} /></label>
               {index === 2 && <label className="live-check"><input type="checkbox" checked={slot.isLive} onChange={(event) => setPhotoLive(index, event.target.checked)} /> Imagem da live</label>}
-              {slot.isLive ? <input className="time-input" aria-label={`Momento da imagem ${index + 1} na live`} type="text" inputMode="numeric" placeholder="HH:MM:SS" value={slot.time} onChange={(event) => setPhotoTime(index, event.target.value)} /> : <small className="reference-only">Imagem final de referÃªncia Â· fica fora do vÃ­deo</small>}
+              {slot.isLive ? <input className="time-input" aria-label={`Momento da imagem ${index + 1} na live`} type="text" inputMode="numeric" placeholder="HH:MM:SS" value={slot.time} onChange={(event) => setPhotoTime(index, event.target.value)} /> : <small className="reference-only">Imagem final de referência · fica fora do vídeo</small>}
             </div>)}
           </div>
         </div>
 
         <aside className="preview-panel">
-          <div className="preview-head"><span>PRÃ‰-VISUALIZAÃ‡ÃƒO DOS 2 FORMATOS</span><span>16:9 + 9:16</span></div>
+          <div className="preview-head"><span>PRÉ-VISUALIZAÇÃO DOS 2 FORMATOS</span><span>16:9 + 9:16</span></div>
           <div className="canvas-wrap horizontal">
-            {sourceUrl ? <canvas ref={canvasRef} aria-label="Live 16:9 com limites do recorte vertical 9:16" onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); moveCropGuide(event); }} onPointerMove={(event) => { if (event.currentTarget.hasPointerCapture(event.pointerId)) moveCropGuide(event); }} /> : twitchEmbed ? <div className="twitch-preview"><iframe title="PrÃ©-visualizaÃ§Ã£o Twitch" src={twitchEmbed} allowFullScreen /><div className="crop-shade left" style={{ width: `${(100 - (9 / 16) / (16 / 9) * 100) * focus / 100}%` }} /><div className="crop-guide" style={{ left: `${(100 - (9 / 16) / (16 / 9) * 100) * focus / 100}%`, width: `${(9 / 16) / (16 / 9) * 100}%` }}><span>RECORTE 9:16</span></div><div className="crop-shade right" style={{ left: `${(100 - (9 / 16) / (16 / 9) * 100) * focus / 100 + (9 / 16) / (16 / 9) * 100}%` }} /><div className="crop-interaction" style={{ left: `${(100 - (9 / 16) / (16 / 9) * 100) * focus / 100}%`, width: `${(9 / 16) / (16 / 9) * 100}%` }} role="slider" aria-label="PosiÃ§Ã£o do recorte vertical" aria-valuemin={0} aria-valuemax={100} aria-valuenow={focus} tabIndex={0} title="Arrasta para mover o recorte 9:16" onKeyDown={(event) => { if (event.key === "ArrowLeft") setFocus((value) => Math.max(0, value - 1)); if (event.key === "ArrowRight") setFocus((value) => Math.min(100, value + 1)); }} onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); moveTwitchCropGuide(event); }} onPointerMove={(event) => { if (event.currentTarget.hasPointerCapture(event.pointerId)) moveTwitchCropGuide(event); }} /></div> : <div className="empty-preview"><span>âœ¦</span><b>O teu timelapse aparece aqui</b><small>Escolhe uma VOD ou gravaÃ§Ã£o para comeÃ§ar</small></div>}
+            {sourceUrl ? <canvas ref={canvasRef} aria-label="Live 16:9 com limites do recorte vertical 9:16" onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); moveCropGuide(event); }} onPointerMove={(event) => { if (event.currentTarget.hasPointerCapture(event.pointerId)) moveCropGuide(event); }} /> : twitchEmbed ? <div className="twitch-preview"><iframe title="Pré-visualização Twitch" src={twitchEmbed} allowFullScreen /><div className="crop-shade left" style={{ width: `${(100 - (9 / 16) / (16 / 9) * 100) * focus / 100}%` }} /><div className="crop-guide" style={{ left: `${(100 - (9 / 16) / (16 / 9) * 100) * focus / 100}%`, width: `${(9 / 16) / (16 / 9) * 100}%` }}><span>RECORTE 9:16</span></div><div className="crop-shade right" style={{ left: `${(100 - (9 / 16) / (16 / 9) * 100) * focus / 100 + (9 / 16) / (16 / 9) * 100}%` }} /><div className="crop-interaction" style={{ left: `${(100 - (9 / 16) / (16 / 9) * 100) * focus / 100}%`, width: `${(9 / 16) / (16 / 9) * 100}%` }} role="slider" aria-label="Posição do recorte vertical" aria-valuemin={0} aria-valuemax={100} aria-valuenow={focus} tabIndex={0} title="Arrasta para mover o recorte 9:16" onKeyDown={(event) => { if (event.key === "ArrowLeft") setFocus((value) => Math.max(0, value - 1)); if (event.key === "ArrowRight") setFocus((value) => Math.min(100, value + 1)); }} onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); moveTwitchCropGuide(event); }} onPointerMove={(event) => { if (event.currentTarget.hasPointerCapture(event.pointerId)) moveTwitchCropGuide(event); }} /></div> : <div className="empty-preview"><span>✦</span><b>O teu timelapse aparece aqui</b><small>Escolhe uma VOD ou gravação para começar</small></div>}
           </div>
           <video ref={videoRef} src={generatedPreview || sourceUrl || undefined} muted playsInline preload="metadata" onLoadedData={refreshPreview} />
           <div className="status" aria-live="polite"><span>{status}</span>{busy && <b>Falta {100 - progress}%</b>}</div>
           {busy && <div className="progress"><i style={{ width: `${progress}%` }} /></div>}
-          <button className="generate" type="button" disabled={busy} onClick={localMode && (vodConnected || reusableJob) && !sourceUrl ? generateFromTwitch : generate}>{busy ? "A gerar o pacote 1080p60â€¦" : localMode && (vodConnected || reusableJob) && !sourceUrl ? duration > 90 ? `Gerar pacote pÃºblico + ${duration / 60} min local` : "Gerar 6 duraÃ§Ãµes nos 2 formatos" : sourceUrl ? "Gerar a duraÃ§Ã£o escolhida da gravaÃ§Ã£o" : "Escolhe uma VOD ou gravaÃ§Ã£o"}<span>â†’</span></button>
+          <button className="generate" type="button" disabled={busy} onClick={localMode && (vodConnected || reusableJob) && !sourceUrl ? generateFromTwitch : generate}>{busy ? "A gerar o pacote 1080p60…" : localMode && (vodConnected || reusableJob) && !sourceUrl ? duration > 90 ? `Gerar pacote público + ${duration / 60} min local` : "Gerar 6 durações nos 2 formatos" : sourceUrl ? "Gerar a duração escolhida da gravação" : "Escolhe uma VOD ou gravação"}<span>→</span></button>
           <div className="download-grid">
-            {(variantDownloads[String(duration)]?.horizontal || downloads.horizontal) && <a className="download" href={variantDownloads[String(duration)]?.horizontal || downloads.horizontal} download={`xcatarina-${category}-${duration}s-horizontal-1080p60-timelapse.mp4`}>Descarregar {duration}s Â· 16:9</a>}
-            {(variantDownloads[String(duration)]?.vertical || downloads.vertical) && <a className="download" href={variantDownloads[String(duration)]?.vertical || downloads.vertical} download={`xcatarina-${category}-${duration}s-vertical-1080p60-timelapse.mp4`}>Descarregar {duration}s Â· 9:16</a>}
+            {(variantDownloads[String(duration)]?.horizontal || downloads.horizontal) && <a className="download" href={variantDownloads[String(duration)]?.horizontal || downloads.horizontal} download={`xcatarina-${category}-${duration}s-horizontal-1080p60-timelapse.mp4`}>Descarregar {duration}s · 16:9</a>}
+            {(variantDownloads[String(duration)]?.vertical || downloads.vertical) && <a className="download" href={variantDownloads[String(duration)]?.vertical || downloads.vertical} download={`xcatarina-${category}-${duration}s-vertical-1080p60-timelapse.mp4`}>Descarregar {duration}s · 9:16</a>}
           </div>
           {Object.keys(variantDownloads).length >= 6 && (downloads.horizontal || downloads.vertical) && <div className="publish-box">
-            <span>PUBLICAR NO SITE PÃšBLICO</span>
-            <input aria-label="TÃ­tulo pÃºblico" placeholder="TÃ­tulo do vÃ­deo" value={publishTitle} onChange={(event) => setPublishTitle(event.target.value)} />
-            <textarea aria-label="DescriÃ§Ã£o pÃºblica" placeholder="DescriÃ§Ã£o curta (opcional)" rows={2} value={publishDescription} onChange={(event) => setPublishDescription(event.target.value)} />
+            <span>PUBLICAR NO SITE PÚBLICO</span>
+            <input aria-label="Título público" placeholder="Título do vídeo" value={publishTitle} onChange={(event) => setPublishTitle(event.target.value)} />
+            <textarea aria-label="Descrição pública" placeholder="Descrição curta (opcional)" rows={2} value={publishDescription} onChange={(event) => setPublishDescription(event.target.value)} />
             <label><span>Data do timelapse (por defeito, fim da VOD)</span><input aria-label="Data do timelapse" type="date" value={publishDate} onChange={(event) => { publishDateRef.current = event.target.value; setPublishDate(event.target.value); }} /></label>
             <div className="publish-actions">
-              <button className="publish-both" type="button" disabled={Boolean(publishing)} onClick={publishBoth}>{publishing === "both" ? `A publicar Â· ${publishProgress}%` : "Publicar as 6 duraÃ§Ãµes nos 2 formatos"}</button>
+              <button className="publish-both" type="button" disabled={Boolean(publishing)} onClick={publishBoth}>{publishing === "both" ? `A publicar · ${publishProgress}%` : "Publicar as 6 durações nos 2 formatos"}</button>
               {publicationId && <button type="button" disabled={Boolean(publishing)} onClick={updatePublishedDate}>Atualizar data</button>}
             </div>
             <output>{publishStatus}</output>
           </div>}
-          <button className="clear-studio" type="button" disabled={busy || Boolean(publishing)} onClick={clearStudio}>Limpar imagens, horÃ¡rios e VOD</button>
+          <button className="clear-studio" type="button" disabled={busy || Boolean(publishing)} onClick={clearStudio}>Limpar imagens, horários e VOD</button>
         </aside>
       </section>
 
-      <footer><span>feito para <b>xCatarina</b></span><span>rosa Â· azul-bebÃ© Â· amarelo</span></footer>
+      <footer><span>feito para <b>xCatarina</b></span><span>rosa · azul-bebé · amarelo</span></footer>
     </main>
   );
 }
+
+
+
+
+
+
 
 
 

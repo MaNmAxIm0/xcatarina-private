@@ -1,9 +1,12 @@
-export type CapturedSession = {
+﻿export type CapturedSession = {
   manifestUrl: string;
   vodId: string;
   capturedAt: number;
   vodStartedAt?: string;
   vodDurationSeconds?: number;
+  secondaryManifestUrl?: string;
+  secondaryVodId?: string;
+  combineLives?: boolean;
 };
 
 const state = globalThis as typeof globalThis & { xcatarinaTwitchSession?: CapturedSession };
@@ -18,3 +21,4 @@ export function getCapturedTwitchSession() {
   if (!session || Date.now() - session.capturedAt >= 6 * 60 * 60 * 1000) return null;
   return session;
 }
+
