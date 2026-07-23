@@ -73,19 +73,39 @@ export function TimelapseStudio() {
   const [publicationId, setPublicationId] = useState("");
   const [publishTitle, setPublishTitle] = useState("");
   const [publishDescription, setPublishDescription] = useState("");
+  const [publishDate, setPublishDate] = useState("");
+  const publishDateRef = useRef("");
   const [publishProgress, setPublishProgress] = useState(0);
   const [publishing, setPublishing] = useState<"both" | null>(null);
   const [publishStatus, setPublishStatus] = useState("");
 
+  const updatePublishedDate = async () => {
+    if (!publicationId || !publishDate) { setPublishStatus("Indica uma data e publica primeiro este vídeo."); return; }
+    setPublishStatus("A atualizar a data da publicação…");
+    const response = await fetch("/api/publish", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ publicationId, publishedAt: publishDate }) });
+    const result = await response.json().catch(() => ({})) as { error?: string };
+    setPublishStatus(response.ok ? "Data da publicação atualizada." : (result.error || "Não foi possível atualizar a data."));
+  };
+
   useEffect(() => {
+    const savedPublication = window.localStorage.getItem("xcatarina-publication-id") || "";
+    if (savedPublication) setPublicationId(savedPublication);
     const local = ["localhost", "127.0.0.1"].includes(window.location.hostname);
     const modeTimer = window.setTimeout(() => setLocalMode(local), 0);
     if (!local) return () => window.clearTimeout(modeTimer);
     const check = async () => {
       try {
-        const result = await fetch("/api/twitch/session", { cache: "no-store" }).then((response) => response.json()) as { available?: boolean; vodId?: string };
-        setVodConnected(Boolean(result.available));
-        setConnectedVodId(result.vodId || "");
+      const result = await fetch("/api/twitch/session", { cache: "no-store" }).then((response) => response.json()) as { available?: boolean; vodId?: string; vodStartedAt?: string | null; vodDurationSeconds?: number | null };
+      setVodConnected(Boolean(result.available));
+      setConnectedVodId(result.vodId || "");
+      if (result.vodStartedAt && result.vodDurationSeconds) {
+        const end = new Date(Date.parse(result.vodStartedAt) + result.vodDurationSeconds * 1000);
+        if (!Number.isNaN(end.getTime()) && !publishDateRef.current) {
+          const date = end.toISOString().slice(0, 10);
+          publishDateRef.current = date;
+          setPublishDate(date);
+        }
+      }
       } catch { setVodConnected(false); }
     };
     void check();
@@ -103,7 +123,11 @@ export function TimelapseStudio() {
         setStatus("A recuperar o processamento que ficou ativo…");
       }
       if (savedReusable) {
-        try { setReusableJob(JSON.parse(savedReusable) as ReusableJob); } catch { window.localStorage.removeItem("xcatarina-reusable-job"); }
+        try {
+          const reusable = JSON.parse(savedReusable) as ReusableJob;
+          setReusableJob(reusable);
+          if (!activeJob) setJobId(reusable.id);
+        } catch { window.localStorage.removeItem("xcatarina-reusable-job"); }
       }
     }, 0);
     return () => window.clearTimeout(restoreTimer);
@@ -573,10 +597,11 @@ export function TimelapseStudio() {
     if (!reusableJob?.id) { setPublishStatus("Não foi encontrado o pacote local. Gera novamente a partir da VOD."); return; }
     const sharedPublicationId = publicationId || crypto.randomUUID();
     if (!publicationId) setPublicationId(sharedPublicationId);
+    window.localStorage.setItem("xcatarina-publication-id", sharedPublicationId);
     setPublishing("both"); setPublishProgress(0); setPublishStatus("A publicar as 12 versões como um só vídeo…");
     try {
       setPublishProgress(5);
-      const response = await fetch("/api/publish", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ jobId: reusableJob.id, publicationId: sharedPublicationId, title: publishTitle, description: publishDescription, category }) });
+      const response = await fetch("/api/publish", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ jobId: reusableJob.id, publicationId: sharedPublicationId, title: publishTitle, description: publishDescription, category, publishedAt: publishDate }) });
       const result = await response.json().catch(() => ({})) as { error?: string };
       if (!response.ok) throw new Error(result.error || "Não foi possível publicar no Cloudflare R2.");
       setPublishProgress(100);
@@ -606,7 +631,7 @@ export function TimelapseStudio() {
     setSourceUrl(""); setSourceName(""); setSourceInputKey((value) => value + 1); setTwitchUrl(""); setTwitchEmbed("");
     setStartAt(""); setEndAt(""); setDuration(30); setFocus(77);
     setPhotoSlots([0, 1, 2].map(() => ({ file: null, time: "", isLive: true, previewUrl: "" })));
-    setDownloads({}); setVariantDownloads({}); setPublicationId(""); setPublishTitle(""); setPublishDescription(""); setPublishStatus(""); setPublishProgress(0);
+    setDownloads({}); setVariantDownloads({}); setPublicationId(""); setPublishTitle(""); setPublishDescription(""); publishDateRef.current = ""; setPublishDate(""); setPublishStatus(""); setPublishProgress(0);
     setProgress(0); setStatus("Estúdio limpo. Escolhe uma nova VOD ou gravação.");
   };
 
@@ -695,8 +720,10 @@ export function TimelapseStudio() {
             <span>PUBLICAR NO SITE PÚBLICO</span>
             <input aria-label="Título público" placeholder="Título do vídeo" value={publishTitle} onChange={(event) => setPublishTitle(event.target.value)} />
             <textarea aria-label="Descrição pública" placeholder="Descrição curta (opcional)" rows={2} value={publishDescription} onChange={(event) => setPublishDescription(event.target.value)} />
+            <label><span>Data do timelapse (por defeito, fim da VOD)</span><input aria-label="Data do timelapse" type="date" value={publishDate} onChange={(event) => { publishDateRef.current = event.target.value; setPublishDate(event.target.value); }} /></label>
             <div className="publish-actions">
               <button className="publish-both" type="button" disabled={Boolean(publishing)} onClick={publishBoth}>{publishing === "both" ? `A publicar · ${publishProgress}%` : "Publicar as 6 durações nos 2 formatos"}</button>
+              {publicationId && <button type="button" disabled={Boolean(publishing)} onClick={updatePublishedDate}>Atualizar data</button>}
             </div>
             <output>{publishStatus}</output>
           </div>}

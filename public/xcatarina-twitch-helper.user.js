@@ -16,6 +16,7 @@
   "use strict";
   const studio = "http://localhost:3000/api/twitch/session";
   let sent = "";
+  let sentMetadata = "";
 
   function vodId() {
     const match = location.href.match(/(?:videos\/|\/v\/|[?&]video=)(\d+)/);
@@ -43,6 +44,7 @@
     const id = vodId();
     const token = findPlaybackToken(value);
     if (!id || !token) return;
+    const metadata = findVodMetadata(value, id);
     const query = new URLSearchParams({
       allow_source: "true",
       allow_audio_only: "true",
@@ -52,17 +54,31 @@
       sig: token.signature,
       token: token.value,
     });
-    send(`https://usher.ttvnw.net/vod/${id}.m3u8?${query}`);
+    send(`https://usher.ttvnw.net/vod/${id}.m3u8?${query}`, metadata);
   }
 
-  function send(value) {
-    if (!isManifest(value) || value === sent) return;
+  function findVodMetadata(value, id) {
+    if (!value || typeof value !== "object") return {};
+    if (String(value.id || "") === id && (value.createdAt || value.created_at || value.lengthSeconds || value.durationSeconds)) {
+      return { startedAt: value.createdAt || value.created_at || "", durationSeconds: Number(value.lengthSeconds || value.durationSeconds || 0) || 0 };
+    }
+    for (const child of Object.values(value)) {
+      const found = findVodMetadata(child, id);
+      if (found.startedAt || found.durationSeconds) return found;
+    }
+    return {};
+  }
+
+  function send(value, metadata = {}) {
+    const metadataKey = JSON.stringify(metadata);
+    if (!isManifest(value) || (value === sent && metadataKey === sentMetadata)) return;
     sent = value;
+    sentMetadata = metadataKey;
     GM_xmlhttpRequest({
       method: "POST",
       url: studio,
       headers: { "Content-Type": "application/json" },
-      data: JSON.stringify({ manifestUrl: value, vodId: vodId() }),
+      data: JSON.stringify({ manifestUrl: value, vodId: vodId(), ...metadata }),
       onload: (response) => {
         if (response.status >= 200 && response.status < 300) show("VOD ligada ao Studio ✓", "#52ad77");
         else show("Abre primeiro o Studio local", "#e5679f");

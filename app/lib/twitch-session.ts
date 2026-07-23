@@ -2,6 +2,8 @@ export type CapturedSession = {
   manifestUrl: string;
   vodId: string;
   capturedAt: number;
+  vodStartedAt?: string;
+  vodDurationSeconds?: number;
 };
 
 const state = globalThis as typeof globalThis & { xcatarinaTwitchSession?: CapturedSession };
