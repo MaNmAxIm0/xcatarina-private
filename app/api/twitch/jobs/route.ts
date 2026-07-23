@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+﻿import { spawn } from "node:child_process";
 import { copyFile, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -52,7 +52,7 @@ function run(binary: string, args: string[], onLine?: (line: string) => void) {
       output.split(/\r?\n/).forEach((line) => onLine?.(line));
     });
     child.on("error", reject);
-    child.on("close", (code) => code === 0 ? resolve({ stdout }) : reject(new Error(stderr || `O processo terminou com o código ${code}.`)));
+    child.on("close", (code) => code === 0 ? resolve({ stdout }) : reject(new Error(stderr || `O processo terminou com o cÃ³digo ${code}.`)));
   });
 }
 
@@ -96,6 +96,9 @@ async function renderOutputs(job: Job, baseInput: string, watermark: string, tar
     "-filter_complex", horizontalFilter,
     "-map", "[out]", "-an", "-t", String(targetDuration), "-c:v", "libx264", "-preset", "fast", "-crf", "20", "-r", "60", "-movflags", "+faststart", "-y", horizontalOutput,
   ]);
+  job.variants = { ...(job.variants || {}), [String(targetDuration)]: { horizontal: `/api/twitch/jobs/${job.id}/file/horizontal?duration=${targetDuration}` } };
+  job.outputs = { ...(job.outputs || {}), horizontal: job.variants[String(targetDuration)].horizontal };
+  await save(job);
 
   job.currentFormat = "vertical";
   job.progress = progressStart + 7;
@@ -133,10 +136,10 @@ async function processJob(job: Job, manifestUrl: string, targetDuration: number,
       const baseDuration = sourceJob.baseDuration || sourceJob.duration || 0;
       const sourceBase = path.join(outputDir, `${baseJobId}-horizontal-base.mp4`);
       if (sourceJob.state !== "complete" || !baseDuration || targetDuration > baseDuration) {
-        throw new Error("Só é possível reutilizar um timelapse concluído para uma duração igual ou menor.");
+        throw new Error("SÃ³ Ã© possÃ­vel reutilizar um timelapse concluÃ­do para uma duraÃ§Ã£o igual ou menor.");
       }
       if ((sourceJob.startAt || 0) !== startAt || (sourceJob.endAt || 0) !== endAt) {
-        throw new Error("Para mudar o início ou o fim é necessário voltar a processar a VOD.");
+        throw new Error("Para mudar o inÃ­cio ou o fim Ã© necessÃ¡rio voltar a processar a VOD.");
       }
       const speed = baseDuration / targetDuration;
       job.baseJobId = baseJobId;
@@ -155,7 +158,7 @@ async function processJob(job: Job, manifestUrl: string, targetDuration: number,
       const clip = buildClipPlaylist(segments, clipStart, clipEnd);
       job.segmentCount = clip.selectedCount;
       await save(job);
-      if (clip.clipDuration < targetDuration) throw new Error("A duração final tem de ser igual ou inferior ao intervalo escolhido.");
+      if (clip.clipDuration < targetDuration) throw new Error("A duraÃ§Ã£o final tem de ser igual ou inferior ao intervalo escolhido.");
       const speed = clip.clipDuration / targetDuration;
       job.baseJobId = job.id;
       job.baseDuration = targetDuration;
@@ -205,7 +208,7 @@ async function processJob(job: Job, manifestUrl: string, targetDuration: number,
     await save(job);
   } catch (error) {
     job.state = "error";
-    job.error = error instanceof Error ? error.message : "Não foi possível processar a VOD.";
+    job.error = error instanceof Error ? error.message : "NÃ£o foi possÃ­vel processar a VOD.";
     await save(job);
   } finally {
     await Promise.all([
@@ -217,7 +220,7 @@ async function processJob(job: Job, manifestUrl: string, targetDuration: number,
 }
 
 export async function POST(request: Request) {
-  if (process.env.VERCEL) return NextResponse.json({ error: "A importação de VOD só está disponível no estúdio local." }, { status: 403 });
+  if (process.env.VERCEL) return NextResponse.json({ error: "A importaÃ§Ã£o de VOD sÃ³ estÃ¡ disponÃ­vel no estÃºdio local." }, { status: 403 });
   let body: { duration?: number; focus?: number; start?: string; end?: string; reuseJobId?: string } = {};
   let outroFile: File | null = null;
   if ((request.headers.get("content-type") || "").includes("multipart/form-data")) {
@@ -241,7 +244,7 @@ export async function POST(request: Request) {
   await save(job);
   let outroImage: string | undefined;
   if (outroFile) {
-    if (outroFile.size > 20 * 1024 * 1024 || !outroFile.type.startsWith("image/")) return NextResponse.json({ error: "A terceira imagem tem de ser uma imagem até 20 MB." }, { status: 400 });
+    if (outroFile.size > 20 * 1024 * 1024 || !outroFile.type.startsWith("image/")) return NextResponse.json({ error: "A terceira imagem tem de ser uma imagem atÃ© 20 MB." }, { status: 400 });
     outroImage = path.join(workDir, `${job.id}-outro.png`);
     await sharp(Buffer.from(await outroFile.arrayBuffer())).rotate().png().toFile(outroImage);
   }
@@ -251,24 +254,24 @@ export async function POST(request: Request) {
 
 export async function GET(request: Request) {
   const id = new URL(request.url).searchParams.get("id") || "";
-  if (!/^[a-f0-9-]{36}$/.test(id)) return NextResponse.json({ error: "Tarefa inválida." }, { status: 400 });
+  if (!/^[a-f0-9-]{36}$/.test(id)) return NextResponse.json({ error: "Tarefa invÃ¡lida." }, { status: 400 });
   try {
     const job = JSON.parse(await readFile(path.join(workDir, `${id}.json`), "utf8")) as Job;
     return NextResponse.json(job, { headers: { "Cache-Control": "no-store" } });
   } catch {
-    return NextResponse.json({ error: "Tarefa não encontrada." }, { status: 404 });
+    return NextResponse.json({ error: "Tarefa nÃ£o encontrada." }, { status: 404 });
   }
 }
 
 export async function DELETE(request: Request) {
-  if (process.env.VERCEL) return NextResponse.json({ error: "Disponível apenas localmente." }, { status: 403 });
+  if (process.env.VERCEL) return NextResponse.json({ error: "DisponÃ­vel apenas localmente." }, { status: 403 });
   const body = await request.json().catch(() => ({})) as { ids?: string[]; all?: boolean };
   const ids = new Set((body.ids || []).filter((id) => /^[a-f0-9-]{36}$/.test(id)));
   for (const id of [...ids]) {
     try {
       const job = JSON.parse(await readFile(path.join(workDir, `${id}.json`), "utf8")) as Job;
       if (job.baseJobId && /^[a-f0-9-]{36}$/.test(job.baseJobId)) ids.add(job.baseJobId);
-    } catch { /* O registo pode já ter sido removido. */ }
+    } catch { /* O registo pode jÃ¡ ter sido removido. */ }
   }
   const removeMatches = async (directory: string) => {
     const names = await readdir(directory).catch(() => [] as string[]);
@@ -279,3 +282,5 @@ export async function DELETE(request: Request) {
   const removed = (await removeMatches(workDir)) + (await removeMatches(outputDir));
   return NextResponse.json({ ok: true, removed });
 }
+
+
